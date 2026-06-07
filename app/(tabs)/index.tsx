@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -14,13 +14,15 @@ import {
   ActivityIndicator,
   FlatList,
   SectionList,
+  ScrollView,
   Switch,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+
 import { supabase } from '../../lib/supabase';
 import { useBoard } from '../../hooks/useBoard';
 import { useRole } from '../../hooks/useRole';
-import { AreaWithCount, Area } from '../../types';
+import { AreaWithCount, Area, Profile } from '../../types';
 import { Ionicons } from '@expo/vector-icons';
 
 // Strip duplicate suffix to get base LOT code (K446-1 → K446)
@@ -30,102 +32,92 @@ function cleanLotNumber(lot: string) {
 }
 
 // ─── Animated Rack Cell ────────────────────────────────────────
-function RackCell({
-  area,
-  columnWidth,
-  isMatched,
-  isTargetArea,
-  shouldDim,
-  hasYarn,
-  lotDisplay,
-  onPress,
-}: {
-  area: AreaWithCount;
-  columnWidth: number;
-  isMatched: boolean;
-  isTargetArea: boolean;
-  shouldDim: boolean;
-  hasYarn: boolean;
-  lotDisplay: string;
-  onPress: () => void;
-}) {
-  const pulseAnim = useRef(new Animated.Value(0)).current;
+    const RackCell = React.memo(({ area, columnWidth, isMatched, isTargetArea, shouldDim, hasYarn, lotDisplay, onPress }: {
+      area: AreaWithCount;
+      columnWidth: number;
+      isMatched: boolean;
+      isTargetArea: boolean;
+      shouldDim: boolean;
+      hasYarn: boolean;
+      lotDisplay: string;
+      onPress: () => void;
+    }) => {
+      const pulseAnim = useRef(new Animated.Value(0)).current;
 
-  useEffect(() => {
-    if (isMatched || isTargetArea) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, { toValue: 1, duration: 350, useNativeDriver: false }),
-          Animated.timing(pulseAnim, { toValue: 0, duration: 350, useNativeDriver: false }),
-        ]),
-        { iterations: 6 }
-      ).start();
-    } else {
-      pulseAnim.setValue(0);
-    }
-  }, [isMatched, isTargetArea]);
+      useEffect(() => {
+        if (isMatched || isTargetArea) {
+          Animated.loop(
+            Animated.sequence([
+              Animated.timing(pulseAnim, { toValue: 1, duration: 350, useNativeDriver: false }),
+              Animated.timing(pulseAnim, { toValue: 0, duration: 350, useNativeDriver: false }),
+            ]),
+            { iterations: 6 }
+          ).start();
+        } else {
+          pulseAnim.setValue(0);
+        }
+      }, [isMatched, isTargetArea]);
 
-  const animBorderColor = pulseAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['#2e7d32', '#76c442'],
-  });
-  const animBorderWidth = pulseAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [2, 3],
-  });
+      const animBorderColor = pulseAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: ['#2e7d32', '#76c442'],
+      });
+      const animBorderWidth = pulseAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [2, 3],
+      });
 
-  const isHighlighted = isMatched || isTargetArea;
+      const isHighlighted = isMatched || isTargetArea;
 
-  let cardBg = '#ffffff';
-  let lotColor = hasYarn ? '#2e7d32' : '#cbd5e1';
-  let locColor = '#64748b';
-  let borderColor = hasYarn ? '#c8e6c9' : '#e2e8f0';
+      let cardBg = '#ffffff';
+      let lotColor = hasYarn ? '#2e7d32' : '#cbd5e1';
+      let locColor = '#64748b';
+      let borderColor = hasYarn ? '#c8e6c9' : '#e2e8f0';
 
-  if (isHighlighted) {
-    cardBg = '#e8f5e9';
-    lotColor = '#1b5e20';
-    locColor = '#2e7d32';
-    borderColor = '#2e7d32';
-  }
+      if (isHighlighted) {
+        cardBg = '#e8f5e9';
+        lotColor = '#1b5e20';
+        locColor = '#2e7d32';
+        borderColor = '#2e7d32';
+      }
 
-  return (
-    <Animated.View
-      style={[
-        styles.rackCell,
-        {
-          width: columnWidth,
-          height: columnWidth,
-          backgroundColor: cardBg,
-          borderColor: isHighlighted ? animBorderColor : borderColor,
-          borderWidth: isHighlighted ? animBorderWidth : 1,
-          opacity: shouldDim ? 0.2 : 1.0,
-        },
-        isHighlighted && styles.highlightedCell,
-      ]}
-    >
-      <TouchableOpacity
-        style={styles.rackCellTouchable}
-        onPress={onPress}
-        activeOpacity={0.6}
-      >
-        <Text style={[styles.cellLocation, { color: locColor }]} numberOfLines={1}>
-          {area.code}
-        </Text>
-        <Text
-          numberOfLines={1}
-          adjustsFontSizeToFit
-          minimumFontScale={0.6}
-          style={[styles.cellLot, { color: lotColor, fontWeight: hasYarn ? '800' : '400' }]}
+      return (
+        <Animated.View
+          style={[
+            styles.rackCell,
+            {
+              width: columnWidth,
+              height: columnWidth,
+              backgroundColor: cardBg,
+              borderColor: isHighlighted ? animBorderColor : borderColor,
+              borderWidth: isHighlighted ? animBorderWidth : 1,
+              opacity: shouldDim ? 0.2 : 1.0,
+            },
+            isHighlighted && styles.highlightedCell,
+          ]}
         >
-          {lotDisplay}
-        </Text>
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-
+          <TouchableOpacity
+            style={styles.rackCellTouchable}
+            onPress={onPress}
+            activeOpacity={0.6}
+          >
+            <Text style={[styles.cellLocation, { color: locColor }]} numberOfLines={1}>
+              {area.code}
+            </Text>
+            <Text
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.6}
+              style={[styles.cellLot, { color: lotColor, fontWeight: hasYarn ? '800' : '400' }]}
+            >
+              {lotDisplay}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+      );
+    });
 // ─── Board Screen ──────────────────────────────────────────────
-export default function BoardScreen() {
+function BoardScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ openAreaId?: string; searchLot?: string }>();
   const { areas, loading, refetch } = useBoard();
@@ -143,7 +135,7 @@ export default function BoardScreen() {
   const [columnWidth, setColumnWidth] = useState(65);
 
   // Supervisor Panels State
-  const [showAreaMgmt, setShowAreaMgmt] = useState(false);
+  // Removed showAreaMgmt state (Worker role should not access Manage Areas)
   const [showUserMgmt, setShowUserMgmt] = useState(false);
   const [editingYarn, setEditingYarn] = useState<any>(null);
   const [isEditingLot, setIsEditingLot] = useState(false);
@@ -156,7 +148,7 @@ export default function BoardScreen() {
   const [loadingAreas, setLoadingAreas] = useState(false);
 
   // Users Management panel list
-  const [profiles, setProfiles] = useState<any[]>([]);
+  const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
 
@@ -190,37 +182,7 @@ export default function BoardScreen() {
   const [deleteConfirmArea, setDeleteConfirmArea] = useState<string>('');
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Fetch areas (including inactive ones for management)
-  const fetchAllAreasForMgmt = async () => {
-    setLoadingAreas(true);
-    const { data, error } = await supabase
-      .from('areas')
-      .select('*')
-      .order('code');
-    if (!error && data) {
-      setAllAreas(data);
-    }
-    setLoadingAreas(false);
-  };
-
-  // Fetch profiles for management
-  const fetchProfilesForMgmt = async () => {
-    setLoadingProfiles(true);
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('email');
-    if (!error && data) {
-      setProfiles(data);
-    }
-    setLoadingProfiles(false);
-  };
-
-  useEffect(() => {
-    if (showAreaMgmt) {
-      fetchAllAreasForMgmt();
-    }
-  }, [showAreaMgmt]);
+  // Note: fetchProfilesForMgmt is defined later with useCallback.
 
   useEffect(() => {
     if (showUserMgmt) {
@@ -466,145 +428,37 @@ export default function BoardScreen() {
     }
   };
 
-  // ── Edit Lot ───────────────────────────────────────────────────
-  // ── Area Management ────────────────────────────────────────────
-  const executeEditLot = () => {
-    setEditingYarn(null);
-    setIsEditingLot(false);
-  };
+  const fetchProfilesForMgmt = useCallback(async () => {
+    setLoadingProfiles(true);
+    const { data, error } = await supabase.from('profiles').select('*').order('email');
+    if (!error && data) setProfiles(data);
+    setLoadingProfiles(false);
+  }, []);
 
-  const handleAddArea = async () => {
-    if (role !== 'supervisor') {
-      Alert.alert('Supervisor Required', 'Only supervisors can manage areas.');
-      return;
-    }
-    const code = newAreaCode.trim().toUpperCase();
-    if (!code) {
-      Alert.alert('Required', 'Please enter an Area Code.');
-      return;
-    }
-    setSavingArea(true);
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const operatorEmail = user?.email || 'Operator';
-
-      const { data: newArea, error: insertError } = await supabase
-        .from('areas')
-        .insert({ code, label: newAreaLabel.trim() || null, is_active: true })
-        .select()
-        .single();
-
-      if (insertError) {
-        Alert.alert('Error', 'Failed to create area: ' + insertError.message);
-        setSavingArea(false);
-        return;
-      }
-
-      // Log Area Create action
-      await supabase.from('move_logs').insert({
-        action: 'AREA_CREATE',
-        moved_by: user?.id,
-        to_area_code: code,
-        note: JSON.stringify({
-          action: 'AREA_CREATE',
-          operator: operatorEmail,
-          details: `Created new storage location ${code} (${newAreaLabel.trim() || 'No Label'})`,
-        }),
-      });
-
-      setNewAreaCode('');
-      setNewAreaLabel('');
-      fetchAllAreasForMgmt();
-      refetch();
-      Alert.alert('Success', `Area ${code} created successfully.`);
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    } finally {
-      setSavingArea(false);
-    }
-  };
-
-  const handleToggleAreaActive = async (areaItem: Area, value: boolean) => {
-    if (role !== 'supervisor') {
-      Alert.alert('Supervisor Required', 'Only supervisors can manage areas.');
-      return;
-    }
-    try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const operatorEmail = user?.email || 'Operator';
-
-      const { error: updateError } = await supabase
-        .from('areas')
-        .update({ is_active: value })
-        .eq('id', areaItem.id);
-
-      if (updateError) {
-        Alert.alert('Error', 'Failed to toggle status: ' + updateError.message);
-        return;
-      }
-
-      // Log Area Disable/Enable action
-      await supabase.from('move_logs').insert({
-        action: value ? 'AREA_ENABLE' : 'AREA_DISABLE',
-        moved_by: user?.id,
-        from_area_code: areaItem.code,
-        to_area_code: areaItem.code,
-        note: JSON.stringify({
-          action: value ? 'AREA_ENABLE' : 'AREA_DISABLE',
-          operator: operatorEmail,
-          details: `${value ? 'Enabled' : 'Disabled'} area ${areaItem.code}`,
-        }),
-      });
-
-      fetchAllAreasForMgmt();
-      refetch();
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    }
-  };
-
-  // ── User Management ────────────────────────────────────────────
-  const handleToggleUserRole = async (profileItem: any) => {
-    if (role !== 'supervisor') {
-      Alert.alert('Supervisor Required', 'Only supervisors can manage users.');
-      return;
-    }
+  const handleToggleUserRole = useCallback(async (profileItem: Profile) => {
+    if (role !== 'supervisor') { Alert.alert('Supervisor Required', 'Only supervisors can manage users.'); return; }
     const nextRole = profileItem.role === 'supervisor' ? 'worker' : 'supervisor';
     setUpdatingRoleUserId(profileItem.id);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       const operatorEmail = user?.email || 'Operator';
-
-      // Update in profiles table
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ role: nextRole })
-        .eq('id', profileItem.id);
-
-      if (updateError) {
-        Alert.alert('Error', 'Failed to change role: ' + updateError.message);
-        setUpdatingRoleUserId(null);
-        return;
-      }
-
-      // Sync role to user metadata via triggers if possible, or log it
+      const { error: updateError } = await supabase.from('profiles').update({ role: nextRole }).eq('id', profileItem.id);
+      if (updateError) { Alert.alert('Error', 'Failed to change role: ' + updateError.message); setUpdatingRoleUserId(null); return; }
       await supabase.from('move_logs').insert({
         action: 'ROLE_CHANGE',
         moved_by: user?.id,
-        note: JSON.stringify({
-          action: 'ROLE_CHANGE',
-          operator: operatorEmail,
-          details: `Changed role of user "${profileItem.email}" to "${nextRole}"`,
-        }),
+        note: JSON.stringify({ action: 'ROLE_CHANGE', operator: operatorEmail, details: `Changed role of user "${profileItem.email}" to "${nextRole}"` }),
       });
-
       fetchProfilesForMgmt();
       Alert.alert('Success', `User role updated to ${nextRole}.`);
-    } catch (err: any) {
-      Alert.alert('Error', err.message);
-    } finally {
-      setUpdatingRoleUserId(null);
-    }
+    } catch (err: any) { Alert.alert('Error', err.message); }
+    finally { setUpdatingRoleUserId(null); }
+  }, [role, fetchProfilesForMgmt]);
+
+  // ── Edit Lot ───────────────────────────────────────────────────
+  const executeEditLot = () => {
+    setEditingYarn(null);
+    setIsEditingLot(false);
   };
 
   // Stats
@@ -621,12 +475,18 @@ export default function BoardScreen() {
             <Text style={styles.headerTitle}>📋 Rack Board</Text>
             <View style={styles.roleRow}>
               <Text style={styles.headerSub}>{occupiedRacks}/{totalRacks} occupied</Text>
-              {!roleLoading && (
-                <View style={[styles.roleBadge, role === 'supervisor' ? styles.roleSupervisor : styles.roleWorker]}>
-                  <Text style={styles.roleBadgeText}>
-                    {role === 'supervisor' ? 'Supervisor Mode' : 'Worker Mode'}
-                  </Text>
+              {role === 'supervisor' ? (
+                <View style={[styles.roleBadge, styles.roleSupervisor]}>
+                  <Text style={styles.roleBadgeText}>Supervisor Mode</Text>
                 </View>
+              ) : (
+                <View style={[styles.roleBadge, styles.roleWorker]}>
+                  <Text style={styles.roleBadgeText}>Worker Mode</Text>
+                </View>
+              )}
+              {/* Manage Areas button */}
+              {role === 'supervisor' && (
+                <TouchableOpacity style={styles.superActionBtn} onPress={() => router.push('/manage-areas')}><Ionicons name="location" size={14} color="#047857" style={{ marginRight: 4 }} /><Text style={styles.superActionBtnText}>Manage Areas</Text></TouchableOpacity>
               )}
             </View>
           </View>
@@ -636,19 +496,7 @@ export default function BoardScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* Supervisor Action Bar */}
-        {role === 'supervisor' && (
-          <View style={styles.supervisorActionBar}>
-            <TouchableOpacity style={styles.superActionBtn} onPress={() => setShowAreaMgmt(true)}>
-              <Ionicons name="location" size={14} color="#047857" style={{ marginRight: 4 }} />
-              <Text style={styles.superActionBtnText}>Manage Areas</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.superActionBtn} onPress={() => setShowUserMgmt(true)}>
-              <Ionicons name="people" size={14} color="#047857" style={{ marginRight: 4 }} />
-              <Text style={styles.superActionBtnText}>Manage Users</Text>
-            </TouchableOpacity>
-          </View>
-        )}
+
 
         {/* Real-time Search Bar */}
         <View style={styles.searchContainer}>
@@ -772,81 +620,83 @@ export default function BoardScreen() {
               </View>
 
               {/* Lot Cards with Actions */}
-              <View style={styles.modalContent}>
-                {selectedArea?.yarns && selectedArea.yarns.length > 0 ? (
-                  selectedArea.yarns.map((yarn) => {
-                    const cleanedLot = cleanLotNumber(yarn.yarn_code);
-                    return (
-                      <View key={yarn.id} style={styles.lotDetailCard}>
-                        <View style={styles.lotDetailHeader}>
-                          <Ionicons name="cube-outline" size={16} color="#1b4d3e" />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.lotDetailText}>LOT: {cleanedLot}</Text>
-                            <Text style={styles.lotDetailSubText}>Status: {yarn.status}</Text>
+              <ScrollView style={styles.modalScroll}>
+                <View style={styles.modalContent}>
+                  {selectedArea?.yarns && selectedArea.yarns.length > 0 ? (
+                    selectedArea.yarns.map((yarn) => {
+                      const cleanedLot = cleanLotNumber(yarn.yarn_code);
+                      return (
+                        <View key={yarn.id} style={styles.lotDetailCard}>
+                          <View style={styles.lotDetailHeader}>
+                            <Ionicons name="cube-outline" size={16} color="#1b4d3e" />
+                            <View style={{ flex: 1 }}>
+                              <Text style={styles.lotDetailText}>LOT: {cleanedLot}</Text>
+                              <Text style={styles.lotDetailSubText}>Status: {yarn.status}</Text>
+                            </View>
+                          </View>
+
+                          <View style={styles.lotActions}>
+                            {/* Move (Available to Workers and Supervisors) */}
+                            <TouchableOpacity
+                              style={styles.actionBtnPrimary}
+                              onPress={() => {
+                                handleCloseModal();
+                                router.push(`/move/${yarn.id}`);
+                              }}
+                            >
+                              <Ionicons name="swap-horizontal" size={14} color="#ffffff" />
+                              <Text style={styles.actionBtnPrimaryText}>Move</Text>
+                            </TouchableOpacity>
+
+                            {/* Delete (Supervisor only) */}
+                            {role === 'supervisor' && (
+                              <TouchableOpacity
+                                style={styles.actionBtnDelete}
+                                onPress={() => confirmDeleteLot(yarn, selectedArea.code)}
+                              >
+                                <Ionicons name="trash-outline" size={14} color="#ffffff" />
+                                <Text style={styles.actionBtnDeleteText}>Delete</Text>
+                              </TouchableOpacity>
+                            )}
+
+                            {/* History */}
+                            <TouchableOpacity
+                              style={styles.actionBtnSecondary}
+                              onPress={() => {
+                                handleCloseModal();
+                                router.push(`/yarn/${yarn.id}`);
+                              }}
+                            >
+                              <Ionicons name="time-outline" size={14} color="#475569" />
+                              <Text style={styles.actionBtnSecondaryText}>History</Text>
+                            </TouchableOpacity>
                           </View>
                         </View>
-
-                        <View style={styles.lotActions}>
-                          {/* Move (Available to Workers and Supervisors) */}
-                          <TouchableOpacity
-                            style={styles.actionBtnPrimary}
-                            onPress={() => {
-                              handleCloseModal();
-                              router.push(`/move/${yarn.id}`);
-                            }}
-                          >
-                            <Ionicons name="swap-horizontal" size={14} color="#ffffff" />
-                            <Text style={styles.actionBtnPrimaryText}>Move</Text>
-                          </TouchableOpacity>
-
-                          {/* Delete (Supervisor only) */}
-                          {role === 'supervisor' && (
-                            <TouchableOpacity
-                              style={styles.actionBtnDelete}
-                              onPress={() => confirmDeleteLot(yarn, selectedArea.code)}
-                            >
-                              <Ionicons name="trash-outline" size={14} color="#ffffff" />
-                              <Text style={styles.actionBtnDeleteText}>Delete</Text>
-                            </TouchableOpacity>
-                          )}
-
-                          {/* History */}
-                          <TouchableOpacity
-                            style={styles.actionBtnSecondary}
-                            onPress={() => {
-                              handleCloseModal();
-                              router.push(`/yarn/${yarn.id}`);
-                            }}
-                          >
-                            <Ionicons name="time-outline" size={14} color="#475569" />
-                            <Text style={styles.actionBtnSecondaryText}>History</Text>
-                          </TouchableOpacity>
-                        </View>
-                      </View>
-                    );
-                  })
-                ) : (
-                  <View style={styles.emptyRackContainer}>
-                    <Ionicons name="cube-outline" size={36} color="#cbd5e1" />
-                    <Text style={styles.emptyRackText}>This rack is empty</Text>
-                    {role === 'supervisor' && (
-                      <TouchableOpacity
-                        style={styles.addHereButton}
-                        onPress={() => {
-                          handleCloseModal();
-                          router.push({
-                            pathname: '/(tabs)/add',
-                            params: { areaId: selectedArea?.id },
-                          });
-                        }}
-                      >
-                        <Ionicons name="add-circle-outline" size={16} color="#fff" />
-                        <Text style={styles.addHereButtonText}>Add Lot Here</Text>
-                      </TouchableOpacity>
-                    )}
-                  </View>
-                )}
-              </View>
+                      );
+                    })
+                  ) : (
+                    <View style={styles.emptyRackContainer}>
+                      <Ionicons name="cube-outline" size={36} color="#cbd5e1" />
+                      <Text style={styles.emptyRackText}>This rack is empty</Text>
+                      {role === 'supervisor' && (
+                        <TouchableOpacity
+                          style={styles.addHereButton}
+                          onPress={() => {
+                            handleCloseModal();
+                            router.push({
+                              pathname: '/(tabs)/add',
+                              params: { areaId: selectedArea?.id },
+                            });
+                          }}
+                        >
+                          <Ionicons name="add-circle-outline" size={16} color="#fff" />
+                          <Text style={styles.addHereButtonText}>Add Lot Here</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  )}
+                </View>
+              </ScrollView>
 
               {/* Close footer */}
               <TouchableOpacity style={styles.modalCloseFooterBtn} onPress={handleCloseModal}>
@@ -960,141 +810,6 @@ export default function BoardScreen() {
           </View>
         </Modal>
 
-        {/* Area Management Modal (Supervisor Only) */}
-        <Modal
-          visible={showAreaMgmt}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowAreaMgmt(false)}
-        >
-          <SafeAreaView style={styles.mgmtModalContainer}>
-            <View style={styles.mgmtModalHeader}>
-              <Text style={styles.mgmtModalTitle}>📍 Area Management</Text>
-              <TouchableOpacity onPress={() => setShowAreaMgmt(false)} style={styles.closeModalButton}>
-                <Ionicons name="close" size={24} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            {/* Add Area Form */}
-            <View style={styles.addAreaForm}>
-              <Text style={styles.formSectionTitle}>Create Storage Area</Text>
-              <View style={styles.formRow}>
-                <TextInput
-                  style={[styles.textInput, { flex: 1, marginRight: 8 }]}
-                  placeholder="Area Code (e.g. E1.5)"
-                  placeholderTextColor="#94a3b8"
-                  value={newAreaCode}
-                  onChangeText={setNewAreaCode}
-                  autoCapitalize="characters"
-                />
-                <TextInput
-                  style={[styles.textInput, { flex: 2, marginRight: 8 }]}
-                  placeholder="Description Label (Optional)"
-                  placeholderTextColor="#94a3b8"
-                  value={newAreaLabel}
-                  onChangeText={setNewAreaLabel}
-                />
-                <TouchableOpacity 
-                  style={[styles.addAreaBtn, savingArea && styles.btnDisabled]} 
-                  onPress={handleAddArea}
-                  disabled={savingArea}
-                >
-                  {savingArea ? (
-                    <ActivityIndicator color="#fff" size="small" />
-                  ) : (
-                    <Text style={styles.addAreaBtnText}>Create</Text>
-                  )}
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* List of Areas */}
-            <Text style={styles.listSectionTitle}>Existing Locations</Text>
-            {loadingAreas ? (
-              <ActivityIndicator style={{ marginTop: 24 }} size="large" color="#1b4d3e" />
-            ) : (
-              <FlatList
-                data={allAreas}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 40 }}
-                renderItem={({ item }) => (
-                  <View style={styles.areaRow}>
-                    <View>
-                      <Text style={styles.areaRowCode}>{item.code}</Text>
-                      {item.label && <Text style={styles.areaRowLabel}>{item.label}</Text>}
-                    </View>
-                    <View style={styles.areaRowRight}>
-                      <Text style={[styles.activeStatusText, { color: item.is_active ? '#059669' : '#b91c1c' }]}>
-                        {item.is_active ? 'Active' : 'Disabled'}
-                      </Text>
-                      <Switch
-                        value={item.is_active}
-                        onValueChange={(val) => handleToggleAreaActive(item, val)}
-                        trackColor={{ false: '#cbd5e1', true: '#a7f3d0' }}
-                        thumbColor={item.is_active ? '#059669' : '#94a3b8'}
-                      />
-                    </View>
-                  </View>
-                )}
-              />
-            )}
-          </SafeAreaView>
-        </Modal>
-
-        {/* User Management Modal (Supervisor Only) */}
-        <Modal
-          visible={showUserMgmt}
-          transparent={true}
-          animationType="slide"
-          onRequestClose={() => setShowUserMgmt(false)}
-        >
-          <SafeAreaView style={styles.mgmtModalContainer}>
-            <View style={styles.mgmtModalHeader}>
-              <Text style={styles.mgmtModalTitle}>👥 User Management</Text>
-              <TouchableOpacity onPress={() => setShowUserMgmt(false)} style={styles.closeModalButton}>
-                <Ionicons name="close" size={24} color="#64748b" />
-              </TouchableOpacity>
-            </View>
-
-            {loadingProfiles ? (
-              <ActivityIndicator style={{ marginTop: 24 }} size="large" color="#1b4d3e" />
-            ) : (
-              <FlatList
-                data={profiles}
-                keyExtractor={(item) => item.id}
-                contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12, paddingBottom: 40 }}
-                renderItem={({ item }) => (
-                  <View style={styles.profileRow}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={styles.profileName}>{item.full_name || 'No Name'}</Text>
-                      <Text style={styles.profileEmail}>{item.email}</Text>
-                    </View>
-                    <View style={styles.profileRowRight}>
-                      <View style={[styles.profileRoleBadge, item.role === 'supervisor' ? styles.roleSupervisor : styles.roleWorker]}>
-                        <Text style={styles.profileRoleText}>{item.role}</Text>
-                      </View>
-                      
-                      <TouchableOpacity
-                        style={[styles.roleToggleBtn, updatingRoleUserId === item.id && styles.btnDisabled]}
-                        onPress={() => handleToggleUserRole(item)}
-                        disabled={updatingRoleUserId === item.id}
-                      >
-                        {updatingRoleUserId === item.id ? (
-                          <ActivityIndicator color="#059669" size="small" />
-                        ) : (
-                          <Text style={styles.roleToggleBtnText}>
-                            Change to {item.role === 'supervisor' ? 'Worker' : 'Supervisor'}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-                  </View>
-                )}
-              />
-            )}
-          </SafeAreaView>
-        </Modal>
-
       </View>
     </SafeAreaView>
   );
@@ -1137,17 +852,6 @@ const styles = StyleSheet.create({
   },
   logoutButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '700' },
 
-  // Supervisor Action Bar
-  supervisorActionBar: {
-    flexDirection: 'row',
-    backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    gap: 10,
-    justifyContent: 'flex-start',
-  },
   superActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1246,7 +950,6 @@ const styles = StyleSheet.create({
   cellLocation: { fontSize: 8, fontWeight: '700', letterSpacing: 0.3 },
   cellLot: { fontSize: 13, textAlign: 'center', marginTop: 1 },
 
-  // Modal Overlay
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(15,23,42,0.7)',
@@ -1255,8 +958,9 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   modalContainer: {
-    width: '100%',
-    maxWidth: 340,
+    width: '90%',
+    maxWidth: 380,
+    maxHeight: '90%',
     backgroundColor: '#ffffff',
     borderRadius: 16,
     overflow: 'hidden',
@@ -1296,7 +1000,6 @@ const styles = StyleSheet.create({
   },
   lotDetailText: { fontSize: 16, fontWeight: '800', color: '#1e293b' },
   lotDetailSubText: { fontSize: 12, fontWeight: '600', color: '#475569', marginTop: 2 },
-  lotDetailNotesText: { fontSize: 11, fontStyle: 'italic', color: '#64748b', marginTop: 2 },
 
   lotActions: {
     flexDirection: 'row',
@@ -1521,7 +1224,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#e2e8f0',
   },
   formSectionTitle: { fontSize: 13, fontWeight: '800', color: '#475569', marginBottom: 10, textTransform: 'uppercase' },
-  formRow: { flexDirection: 'row', alignItems: 'center' },
+  formRow: { flexDirection: 'column', alignItems: 'stretch', gap: 8 },
   addAreaBtn: {
     backgroundColor: '#1b4d3e',
     paddingHorizontal: 14,
@@ -1582,3 +1285,4 @@ const styles = StyleSheet.create({
   },
   roleToggleBtnText: { color: '#059669', fontSize: 10, fontWeight: '700' },
 });
+export default BoardScreen;

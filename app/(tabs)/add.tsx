@@ -9,7 +9,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
-  FlatList,
+  Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
@@ -19,13 +19,11 @@ import { useRole } from '../../hooks/useRole';
 
 /**
  * Add Lot Screen — Supervisor Only
- * 
- * Features:
- * - Shows Access Denied card to Workers
- * - Correctly calculates empty locations (excludes occupied by active yarn rolls)
- * - Enter on Location field auto-selects first matching suggestion
- * - Enter on Lot field triggers the save confirmation flow
- * - Persists yarn_code in audit log
+ *
+ * - Multiple lots per location are allowed (no empty/occupied restriction)
+ * - Dropdown shows up to 5 suggestions, fully clickable
+ * - Enter on location auto-selects first match
+ * - Success modal with "Add Another" / "View Board"
  */
 export default function AddScreen() {
   const router = useRouter();
@@ -36,84 +34,62 @@ export default function AddScreen() {
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [selectedAreaCode, setSelectedAreaCode] = useState<string>('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const [allAreas, setAllAreas] = useState<Area[]>([]);
-  const [occupiedAreaIds, setOccupiedAreaIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const [lastRegistered, setLastRegistered] = useState<{ lot: string; area: string } | null>(null);
 
   const lotInputRef = useRef<TextInput>(null);
 
-  // Load areas whenever screen is focused
+  // Load all active areas on focus
   async function loadAreas() {
     setLoading(true);
-
-    // 1. Fetch all active areas
-    const { data: areasData } = await supabase
+    const { data } = await supabase
       .from('areas')
       .select('*')
       .eq('is_active', true)
       .order('code');
-
-    const areas = areasData || [];
+    const areas = data || [];
     setAllAreas(areas);
 
-    // 2. Correctly compute occupied areas: find all area_ids that have at least one in_stock yarn roll
-    const { data: occupiedData } = await supabase
-      .from('yarn_rolls')
-      .select('area_id')
-      .eq('status', 'in_stock')
-      .not('area_id', 'is', null);
-
-    const occupied = new Set<string>((occupiedData || []).map((r: any) => r.area_id));
-    setOccupiedAreaIds(occupied);
-
-    // Pre-select location if passed via route params and it is empty
+    // Pre-select if areaId passed via params
     if (params.areaId) {
       const match = areas.find((a) => a.id === params.areaId);
-      if (match && !occupied.has(match.id)) {
+      if (match) {
         setSelectedAreaId(match.id);
         setSelectedAreaCode(match.code);
         setLocationQuery(match.code);
       }
     }
-
     setLoading(false);
   }
 
   useFocusEffect(
     useCallback(() => {
-      // Only load if supervisor
-      if (role === 'supervisor') {
-        loadAreas();
-      }
-      // Reset form fields (but keep pre-selected location from params)
+      if (role === 'supervisor') loadAreas();
       setLotNumber('');
       setIsConfirming(false);
-      if (!params.areaId) {
-        clearLocation();
-      }
+      setIsSuccess(false);
+      if (!params.areaId) clearLocation();
     }, [params.areaId, role])
   );
 
-  // Filtered suggestions based on locationQuery. Occupied active locations are excluded.
+  // Filtered list (max 5 shown in dropdown)
   const filteredAreas = locationQuery.trim().length > 0
     ? allAreas.filter((a) =>
-        !occupiedAreaIds.has(a.id) &&
         a.code.toUpperCase().startsWith(locationQuery.trim().toUpperCase())
       )
     : [];
 
-  function handleSelectArea(area: Area) {
-    if (occupiedAreaIds.has(area.id)) {
-      Alert.alert('Location Occupied', `${area.code} already has an active lot. Please choose an empty location.`);
-      return;
-    }
+  function selectArea(area: Area) {
     setSelectedAreaId(area.id);
     setSelectedAreaCode(area.code);
     setLocationQuery(area.code);
-    // Move focus to lot number input after selection
+    setShowSuggestions(false);
     setTimeout(() => lotInputRef.current?.focus(), 100);
   }
 
@@ -121,12 +97,13 @@ export default function AddScreen() {
     setSelectedAreaId(null);
     setSelectedAreaCode('');
     setLocationQuery('');
+    setShowSuggestions(false);
   }
 
-  // Enter key on location: auto-select first matching suggestion
+  // Enter on location field → auto-pick first match
   function handleLocationSubmit() {
     if (filteredAreas.length > 0 && !selectedAreaId) {
-      handleSelectArea(filteredAreas[0]);
+      selectArea(filteredAreas[0]);
     } else if (selectedAreaId) {
       lotInputRef.current?.focus();
     }
@@ -140,10 +117,6 @@ export default function AddScreen() {
     }
     if (!selectedAreaId) {
       Alert.alert('Required', 'Please select a rack location.');
-      return;
-    }
-    if (occupiedAreaIds.has(selectedAreaId)) {
-      Alert.alert('Location Occupied', `${selectedAreaCode} already has an active lot. Please choose an empty location.`);
       return;
     }
     setIsConfirming(true);
@@ -194,7 +167,7 @@ export default function AddScreen() {
         return;
       }
 
-      // Log the CREATE action with full audit data
+      // Audit log
       const { data: { user } } = await supabase.auth.getUser();
       await supabase.from('move_logs').insert({
         yarn_roll_id: newYarn.id,
@@ -213,31 +186,15 @@ export default function AddScreen() {
       });
 
       setSaving(false);
-      Alert.alert(
-        '✅ Registered',
-        `LOT ${baseCode} placed at ${selectedAreaCode}`,
-        [
-          {
-            text: 'Add Another',
-            onPress: () => {
-              setLotNumber('');
-              clearLocation();
-              loadAreas();
-            },
-          },
-          { text: 'View Board', onPress: () => router.push('/') },
-        ]
-      );
+      setLastRegistered({ lot: baseCode, area: selectedAreaCode });
+      setIsSuccess(true);
     } catch (err: any) {
       Alert.alert('Error', err.message || 'An unexpected error occurred.');
       setSaving(false);
     }
   }
 
-  const isLocationOccupied = selectedAreaId ? occupiedAreaIds.has(selectedAreaId) : false;
-  const emptyCount = allAreas.filter((a) => !occupiedAreaIds.has(a.id)).length;
-
-  // ─── Supervisor gate ───────────────────────────────────────────
+  // ─── Supervisor gate ────────────────────────────────────────────
   if (roleLoading) {
     return (
       <View style={styles.centered}>
@@ -267,15 +224,10 @@ export default function AddScreen() {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header Card */}
+        {/* Header */}
         <View style={styles.headerCard}>
           <Ionicons name="cube-outline" size={28} color="#1b4d3e" />
-          <View style={{ flex: 1 }}>
-            <Text style={styles.headerTitle}>Register New LOT</Text>
-            <Text style={styles.headerSub}>
-              {emptyCount} empty location{emptyCount !== 1 ? 's' : ''} available
-            </Text>
-          </View>
+          <Text style={styles.headerTitle}>Register New LOT</Text>
         </View>
 
         {/* Location Field */}
@@ -284,19 +236,20 @@ export default function AddScreen() {
             <Ionicons name="location-outline" size={13} color="#1b4d3e" />
             {'  '}Location *
           </Text>
-          <View style={[styles.inputWrapper, isLocationOccupied && styles.inputWrapperWarning]}>
+          <View style={styles.inputWrapper}>
             <TextInput
               style={styles.input}
               placeholder="Type to filter (e.g. A, A1, A1.5)"
               value={locationQuery}
               onChangeText={(text) => {
                 setLocationQuery(text);
-                // Clear selection if user edits text manually
+                setShowSuggestions(true);
                 if (selectedAreaCode && text !== selectedAreaCode) {
                   setSelectedAreaId(null);
                   setSelectedAreaCode('');
                 }
               }}
+              onFocus={() => setShowSuggestions(true)}
               autoCapitalize="characters"
               placeholderTextColor="#a0aec0"
               returnKeyType="next"
@@ -309,59 +262,42 @@ export default function AddScreen() {
             )}
           </View>
 
+          {/* Selected confirmation */}
           {selectedAreaId && (
-            <View style={[styles.statusRow, styles.statusOk]}>
-              <Ionicons
-                name={isLocationOccupied ? 'warning-outline' : 'checkmark-circle-outline'}
-                size={13}
-                color={isLocationOccupied ? '#b45309' : '#2e7d32'}
-              />
-              <Text style={[styles.statusText, isLocationOccupied ? styles.statusTextWarn : styles.statusTextOk]}>
-                {selectedAreaCode} selected{isLocationOccupied ? ' — already occupied' : ''}
-              </Text>
+            <View style={styles.selectedRow}>
+              <Ionicons name="checkmark-circle" size={14} color="#059669" />
+              <Text style={styles.selectedText}>{selectedAreaCode} selected</Text>
             </View>
           )}
 
           {/* Suggestions dropdown */}
-          {locationQuery.trim().length > 0 && !selectedAreaId && filteredAreas.length > 0 && (
+          {showSuggestions && locationQuery.trim().length > 0 && !selectedAreaId && filteredAreas.length > 0 && (
             <View style={styles.suggestionsContainer}>
-              <FlatList
-                data={filteredAreas.slice(0, 20)}
-                keyExtractor={(item) => item.id}
-                scrollEnabled={false}
-                renderItem={({ item }) => {
-                  const isEmpty = !occupiedAreaIds.has(item.id);
-                  return (
-                    <TouchableOpacity
-                      style={[
-                        styles.suggestionItem,
-                        !isEmpty && styles.suggestionItemOccupied,
-                      ]}
-                      onPress={() => handleSelectArea(item)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={[styles.suggestionCode, !isEmpty && styles.suggestionCodeOccupied]}>
-                        {item.code}
-                      </Text>
-                      <View style={[styles.suggestionBadge, isEmpty ? styles.badgeEmpty : styles.badgeOccupied]}>
-                        <Text style={[styles.suggestionBadgeText, isEmpty ? styles.badgeTextEmpty : styles.badgeTextOccupied]}>
-                          {isEmpty ? 'Empty' : 'Occupied'}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                }}
-              />
-              {filteredAreas.length > 20 && (
+              {filteredAreas.slice(0, 5).map((item) => (
+                <Pressable
+                  key={item.id}
+                  style={({ pressed }) => [
+                    styles.suggestionItem,
+                    pressed && styles.suggestionItemPressed,
+                  ]}
+                  onPress={() => selectArea(item)}
+                >
+                  <Ionicons name="location-outline" size={13} color="#475569" style={{ marginRight: 8 }} />
+                  <Text style={styles.suggestionCode}>{item.code}</Text>
+                </Pressable>
+              ))}
+              {filteredAreas.length > 5 && (
                 <Text style={styles.suggestionsMore}>
-                  +{filteredAreas.length - 20} more — type more to narrow down
+                  +{filteredAreas.length - 5} more — type more to narrow down
                 </Text>
               )}
             </View>
           )}
 
           {locationQuery.trim().length > 0 && filteredAreas.length === 0 && (
-            <Text style={styles.noSuggestionsText}>No locations matching "{locationQuery.trim().toUpperCase()}"</Text>
+            <Text style={styles.noSuggestionsText}>
+              No locations matching "{locationQuery.trim().toUpperCase()}"
+            </Text>
           )}
         </View>
 
@@ -371,25 +307,24 @@ export default function AddScreen() {
             <Ionicons name="barcode-outline" size={13} color="#1b4d3e" />
             {'  '}Lot Number *
           </Text>
-          <TextInput
-            ref={lotInputRef}
-            style={styles.input}
-            placeholder="e.g. K446, 3310, 3312"
-            value={lotNumber}
-            onChangeText={setLotNumber}
-            autoCapitalize="characters"
-            placeholderTextColor="#a0aec0"
-            returnKeyType="done"
-            onSubmitEditing={handleInitSave}
-          />
+          <View style={styles.inputWrapper}>
+            <TextInput
+              ref={lotInputRef}
+              style={styles.input}
+              placeholder="e.g. K446, 3310, 3312"
+              value={lotNumber}
+              onChangeText={setLotNumber}
+              autoCapitalize="characters"
+              placeholderTextColor="#a0aec0"
+              returnKeyType="done"
+              onSubmitEditing={handleInitSave}
+            />
+          </View>
         </View>
 
         {/* Save Button */}
         <TouchableOpacity
-          style={[
-            styles.saveButton,
-            (saving || loading) && styles.saveButtonDisabled,
-          ]}
+          style={[styles.saveButton, (saving || loading) && styles.saveButtonDisabled]}
           onPress={handleInitSave}
           disabled={saving || loading}
           activeOpacity={0.85}
@@ -405,63 +340,94 @@ export default function AddScreen() {
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Confirmation Modal */}
+      {/* Confirm Modal */}
       <Modal
         visible={isConfirming}
-        transparent={true}
+        transparent
         animationType="fade"
         onRequestClose={() => setIsConfirming(false)}
       >
         <View style={styles.overlay}>
-          <View style={styles.confirmCard}>
-            <View style={styles.confirmIconRow}>
-              <View style={styles.confirmIconBg}>
-                <Ionicons name="checkmark-circle-outline" size={32} color="#1b4d3e" />
-              </View>
+          <View style={styles.modalCard}>
+            <View style={styles.modalIconBg}>
+              <Ionicons name="checkmark-circle-outline" size={36} color="#1b4d3e" />
             </View>
+            <Text style={styles.modalTitle}>Confirm Registration</Text>
+            <Text style={styles.modalSubtitle}>Please verify before saving:</Text>
 
-            <Text style={styles.confirmTitle}>Confirm Registration</Text>
-            <Text style={styles.confirmSubtitle}>Please verify before saving:</Text>
-
-            <View style={styles.confirmDetails}>
-              <View style={styles.confirmRow}>
-                <View style={styles.confirmLabelRow}>
+            <View style={styles.detailBox}>
+              <View style={styles.detailRow}>
+                <View style={styles.detailLabelRow}>
                   <Ionicons name="location-outline" size={14} color="#64748b" />
-                  <Text style={styles.confirmLabel}>Location</Text>
+                  <Text style={styles.detailLabel}>Location</Text>
                 </View>
-                <Text style={styles.confirmLocation}>{selectedAreaCode}</Text>
+                <Text style={styles.detailValueGreen}>{selectedAreaCode}</Text>
               </View>
-
-              <View style={styles.confirmDivider} />
-
-              <View style={styles.confirmRow}>
-                <View style={styles.confirmLabelRow}>
+              <View style={styles.detailDivider} />
+              <View style={styles.detailRow}>
+                <View style={styles.detailLabelRow}>
                   <Ionicons name="barcode-outline" size={14} color="#64748b" />
-                  <Text style={styles.confirmLabel}>LOT Number</Text>
+                  <Text style={styles.detailLabel}>LOT Number</Text>
                 </View>
-                <Text style={styles.confirmValue}>{lotNumber.trim().toUpperCase()}</Text>
+                <Text style={styles.detailValue}>{lotNumber.trim().toUpperCase()}</Text>
               </View>
-
             </View>
 
-            <View style={styles.confirmActions}>
-              <TouchableOpacity
-                style={styles.btnCancel}
-                onPress={() => setIsConfirming(false)}
-              >
-                <Text style={styles.btnCancelText}>Back</Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={styles.btnSecondary} onPress={() => setIsConfirming(false)}>
+                <Text style={styles.btnSecondaryText}>Back</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.btnConfirm}
-                onPress={handleConfirmSave}
-                disabled={saving}
-              >
+              <TouchableOpacity style={styles.btnPrimary} onPress={handleConfirmSave} disabled={saving}>
                 {saving ? (
                   <ActivityIndicator color="#fff" size="small" />
                 ) : (
-                  <Text style={styles.btnConfirmText}>Confirm & Save</Text>
+                  <Text style={styles.btnPrimaryText}>Confirm & Save</Text>
                 )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Success Modal */}
+      <Modal
+        visible={isSuccess}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setIsSuccess(false)}
+      >
+        <View style={styles.overlay}>
+          <View style={styles.modalCard}>
+            <View style={[styles.modalIconBg, { backgroundColor: '#d1fae5' }]}>
+              <Ionicons name="checkmark-circle" size={36} color="#059669" />
+            </View>
+            <Text style={[styles.modalTitle, { color: '#059669' }]}>Registered!</Text>
+            <Text style={styles.modalSubtitle}>
+              LOT <Text style={{ fontWeight: '800', color: '#1b4d3e' }}>{lastRegistered?.lot}</Text>
+              {' '}has been placed at{' '}
+              <Text style={{ fontWeight: '800', color: '#1b4d3e' }}>{lastRegistered?.area}</Text>
+            </Text>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={styles.btnSecondary}
+                onPress={() => {
+                  setIsSuccess(false);
+                  setLotNumber('');
+                  clearLocation();
+                  loadAreas();
+                }}
+              >
+                <Text style={styles.btnSecondaryText}>Add Another</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.btnPrimary}
+                onPress={() => {
+                  setIsSuccess(false);
+                  router.push('/');
+                }}
+              >
+                <Text style={styles.btnPrimaryText}>View Board</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -473,253 +439,154 @@ export default function AddScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f1f5f9' },
-  scrollContent: { padding: 14, paddingBottom: 40 },
+  scrollContent: { padding: 16, paddingBottom: 48 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
   // Access Denied
   accessDeniedContainer: {
-    flex: 1,
-    backgroundColor: '#f1f5f9',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 24,
+    flex: 1, backgroundColor: '#f1f5f9',
+    justifyContent: 'center', alignItems: 'center', padding: 24,
   },
   accessDeniedCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 32,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#fecaca',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    elevation: 4,
-    maxWidth: 320,
-    width: '100%',
+    backgroundColor: '#ffffff', borderRadius: 20, padding: 32,
+    alignItems: 'center', borderWidth: 1, borderColor: '#fecaca',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 12, elevation: 4,
+    maxWidth: 320, width: '100%',
   },
   accessDeniedTitle: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: '#dc2626',
-    marginBottom: 10,
-    textAlign: 'center',
+    fontSize: 17, fontWeight: '800', color: '#dc2626',
+    marginBottom: 10, textAlign: 'center',
   },
   accessDeniedText: {
-    fontSize: 13,
-    color: '#64748b',
-    textAlign: 'center',
-    lineHeight: 20,
+    fontSize: 13, color: '#64748b', textAlign: 'center', lineHeight: 20,
   },
 
-  // Header Card
+  // Header
   headerCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#e8f5e9',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#c8e6c9',
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: '#e8f5e9', borderRadius: 12, padding: 14,
+    marginBottom: 16, borderWidth: 1, borderColor: '#c8e6c9',
   },
   headerTitle: { fontSize: 15, fontWeight: '800', color: '#1b5e20' },
-  headerSub: { fontSize: 11, color: '#2e7d32', marginTop: 2, fontWeight: '500' },
 
   // Field Card
   fieldCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    shadowColor: '#1b4d3e',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.03,
-    shadowRadius: 3,
-    elevation: 2,
+    backgroundColor: '#ffffff', borderRadius: 12, padding: 14,
+    marginBottom: 14, borderWidth: 1, borderColor: '#e2e8f0',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04, shadowRadius: 4, elevation: 2,
   },
   fieldLabel: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#475569',
-    marginBottom: 8,
+    fontSize: 12, fontWeight: '700', color: '#475569',
+    marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5,
   },
 
-  // Input
+  // Input wrapper — same style for both fields
   inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: '#cbd5e1',
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    backgroundColor: '#f8fafc',
-  },
-  inputWrapperWarning: {
-    borderColor: '#fbbf24',
-    backgroundColor: '#fffbeb',
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#cbd5e1',
+    borderRadius: 10, paddingHorizontal: 12,
+    backgroundColor: '#f8fafc', minHeight: 46,
   },
   input: {
-    flex: 1,
-    fontSize: 14,
-    color: '#0f172a',
-    paddingVertical: 10,
+    flex: 1, fontSize: 15, color: '#0f172a', paddingVertical: 10,
   },
 
-  // Status row
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    marginTop: 6,
-    paddingHorizontal: 4,
+  // Selected location indicator
+  selectedRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    marginTop: 8, paddingHorizontal: 2,
   },
-  statusOk: {},
-  statusText: { fontSize: 11, fontWeight: '600' },
-  statusTextOk: { color: '#2e7d32' },
-  statusTextWarn: { color: '#b45309' },
+  selectedText: { fontSize: 12, fontWeight: '700', color: '#059669' },
 
-  // Suggestions
+  // Suggestions dropdown
   suggestionsContainer: {
-    marginTop: 6,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 8,
-    backgroundColor: '#fff',
-    overflow: 'hidden',
+    marginTop: 8, borderWidth: 1, borderColor: '#e2e8f0',
+    borderRadius: 10, backgroundColor: '#fff',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.08, shadowRadius: 8, elevation: 4,
   },
   suggestionItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingVertical: 12,
+    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
   },
-  suggestionItemOccupied: { backgroundColor: '#fafafa' },
-  suggestionCode: { fontSize: 13, fontWeight: '700', color: '#1e293b' },
-  suggestionCodeOccupied: { color: '#94a3b8' },
-  suggestionBadge: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  badgeEmpty: { backgroundColor: '#e8f5e9' },
-  badgeOccupied: { backgroundColor: '#f1f5f9' },
-  suggestionBadgeText: { fontSize: 10, fontWeight: '700' },
-  badgeTextEmpty: { color: '#2e7d32' },
-  badgeTextOccupied: { color: '#94a3b8' },
+  suggestionItemPressed: { backgroundColor: '#f0fdf4' },
+  suggestionCode: { fontSize: 14, fontWeight: '700', color: '#1e293b' },
   suggestionsMore: {
-    fontSize: 11,
-    color: '#94a3b8',
-    textAlign: 'center',
-    paddingVertical: 6,
+    fontSize: 11, color: '#94a3b8', textAlign: 'center', paddingVertical: 8,
   },
   noSuggestionsText: {
-    fontSize: 11,
-    color: '#94a3b8',
-    marginTop: 6,
-    paddingLeft: 2,
+    fontSize: 12, color: '#94a3b8', marginTop: 8, paddingLeft: 2,
   },
 
-  // Save button
+  // Save Button
   saveButton: {
-    backgroundColor: '#1b4d3e',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    marginTop: 8,
-    shadowColor: '#1b4d3e',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 6,
-    elevation: 4,
+    backgroundColor: '#1b4d3e', borderRadius: 12, padding: 16,
+    alignItems: 'center', justifyContent: 'center', flexDirection: 'row',
+    marginTop: 4, shadowColor: '#1b4d3e',
+    shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, elevation: 5,
   },
   saveButtonDisabled: { backgroundColor: '#a3bda8', shadowOpacity: 0 },
   saveButtonText: { color: '#fff', fontSize: 15, fontWeight: '800' },
 
-  // Confirmation Modal
+  // Modal shared
   overlay: {
-    flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.7)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
+    flex: 1, backgroundColor: 'rgba(15,23,42,0.7)',
+    justifyContent: 'center', alignItems: 'center', padding: 20,
   },
-  confirmCard: {
-    width: '100%',
-    maxWidth: 320,
-    backgroundColor: '#ffffff',
-    borderRadius: 20,
-    padding: 24,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 8,
+  modalCard: {
+    width: '100%', maxWidth: 340, backgroundColor: '#ffffff',
+    borderRadius: 20, padding: 24, alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.2, shadowRadius: 16, elevation: 10,
   },
-  confirmIconRow: { alignItems: 'center', marginBottom: 12 },
-  confirmIconBg: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: '#e8f5e9',
-    alignItems: 'center',
-    justifyContent: 'center',
+  modalIconBg: {
+    width: 68, height: 68, borderRadius: 34, backgroundColor: '#e8f5e9',
+    alignItems: 'center', justifyContent: 'center', marginBottom: 14,
   },
-  confirmTitle: { fontSize: 18, fontWeight: '800', color: '#1b5e20', textAlign: 'center', marginBottom: 4 },
-  confirmSubtitle: { fontSize: 12, color: '#64748b', textAlign: 'center', marginBottom: 18 },
-  confirmDetails: {
-    backgroundColor: '#f8fafc',
-    borderRadius: 10,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    gap: 10,
+  modalTitle: {
+    fontSize: 18, fontWeight: '800', color: '#1b5e20',
+    textAlign: 'center', marginBottom: 6,
   },
-  confirmRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  modalSubtitle: {
+    fontSize: 13, color: '#64748b', textAlign: 'center',
+    marginBottom: 20, lineHeight: 20,
   },
-  confirmLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  confirmLabel: { fontSize: 12, color: '#64748b', fontWeight: '600' },
-  confirmLocation: {
-    fontSize: 14,
-    color: '#1b5e20',
-    fontWeight: '900',
-    backgroundColor: '#e8f5e9',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 0.5,
-    borderColor: '#a5d6a7',
-    overflow: 'hidden',
+
+  // Detail box in confirm modal
+  detailBox: {
+    width: '100%', backgroundColor: '#f8fafc', borderRadius: 10,
+    padding: 14, borderWidth: 1, borderColor: '#e2e8f0', gap: 10, marginBottom: 4,
   },
-  confirmValue: { fontSize: 14, color: '#0f172a', fontWeight: '800' },
-  confirmDivider: { height: 1, backgroundColor: '#e2e8f0' },
-  confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 20 },
-  btnCancel: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
-    backgroundColor: '#f1f5f9',
+  detailRow: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
   },
-  btnCancelText: { color: '#475569', fontSize: 13, fontWeight: '700' },
-  btnConfirm: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    borderRadius: 8,
-    backgroundColor: '#1b4d3e',
-    minWidth: 110,
-    alignItems: 'center',
+  detailLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  detailLabel: { fontSize: 12, color: '#64748b', fontWeight: '600' },
+  detailValueGreen: {
+    fontSize: 14, color: '#1b5e20', fontWeight: '900',
+    backgroundColor: '#e8f5e9', paddingHorizontal: 10, paddingVertical: 3,
+    borderRadius: 6, borderWidth: 0.5, borderColor: '#a5d6a7', overflow: 'hidden',
   },
-  btnConfirmText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  detailValue: { fontSize: 14, color: '#0f172a', fontWeight: '800' },
+  detailDivider: { height: 1, backgroundColor: '#e2e8f0' },
+
+  // Modal action buttons
+  modalActions: {
+    flexDirection: 'row', justifyContent: 'flex-end',
+    gap: 10, marginTop: 22, width: '100%',
+  },
+  btnSecondary: {
+    paddingVertical: 11, paddingHorizontal: 20,
+    borderRadius: 9, backgroundColor: '#f1f5f9',
+  },
+  btnSecondaryText: { color: '#475569', fontSize: 13, fontWeight: '700' },
+  btnPrimary: {
+    paddingVertical: 11, paddingHorizontal: 20,
+    borderRadius: 9, backgroundColor: '#1b4d3e',
+    minWidth: 120, alignItems: 'center',
+  },
+  btnPrimaryText: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
 });

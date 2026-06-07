@@ -1,37 +1,15 @@
 import { Stack, useRouter, useSegments } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
-import { Session } from '@supabase/supabase-js';
+import { useEffect } from 'react';
 import { View, ActivityIndicator } from 'react-native';
+import { AuthProvider, useAuth } from '../context/AuthContext';
 
 /**
- * Root layout — handles auth routing.
- * If user is logged in → show the main app (tabs).
- * If user is not logged in → redirect to login screen.
+ * RootLayoutContent - Consumes context to handle redirects and layout stack
  */
-export default function RootLayout() {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
+function RootLayoutContent() {
+  const { session, loading } = useAuth();
   const segments = useSegments();
   const router = useRouter();
-
-  useEffect(() => {
-    // Check if there's an existing session on app start
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
-    });
-
-    // Listen for login / logout events
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
-        setSession(session);
-        setLoading(false);
-      }
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   useEffect(() => {
     if (loading) return;
@@ -58,27 +36,37 @@ export default function RootLayout() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: '#e2e8f0', alignItems: 'center' }}>
-      <View style={{ 
-        flex: 1, 
-        width: '100%', 
-        maxWidth: 500, 
-        backgroundColor: '#fff',
-        shadowColor: '#000',
-        shadowOpacity: 0.1,
-        shadowRadius: 20,
-        elevation: 5,
-        overflow: 'hidden'
-      }}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="login" options={{ headerShown: false }} />
-          <Stack.Screen name="area/[id]" options={{ title: 'Area Detail' }} />
-          <Stack.Screen name="yarn/[id]" options={{ title: 'LOT History', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />
-          <Stack.Screen name="move/[id]" options={{ title: 'Move LOT', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />
-        </Stack>
-      </View>
-    </View>
+    <Stack>
+      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      <Stack.Screen name="login" options={{ headerShown: false }} />
+      <Stack.Screen name="area/[id]" options={{ title: 'Area Detail' }} />
+      <Stack.Screen name="yarn/[id]" options={{ title: 'LOT History', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />
+      <Stack.Screen name="move/[id]" options={{ title: 'Move LOT', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />
+    </Stack>
   );
 }
 
+/**
+ * Root layout — wraps application in AuthProvider
+ */
+export default function RootLayout() {
+  return (
+    <AuthProvider>
+      <View style={{ flex: 1, backgroundColor: '#e2e8f0', alignItems: 'center' }}>
+        <View style={{ 
+          flex: 1, 
+          width: '100%', 
+          maxWidth: 500, 
+          backgroundColor: '#fff',
+          shadowColor: '#000',
+          shadowOpacity: 0.1,
+          shadowRadius: 20,
+          elevation: 5,
+          overflow: 'hidden'
+        }}>
+          <RootLayoutContent />
+        </View>
+      </View>
+    </AuthProvider>
+  );
+}

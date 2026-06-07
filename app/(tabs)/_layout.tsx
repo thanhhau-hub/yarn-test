@@ -80,6 +80,14 @@ export default function TabLayout() {
         name="search"
         options={{ href: null }}
       />
+      <Tabs.Screen
+        name="manage-areas"
+        options={{ href: null, title: 'Manage Areas' }}
+      />
+      <Tabs.Screen
+        name="move/[id]"
+        options={{ href: null, title: 'Move Lot' }}
+      />
     </Tabs>
   );
 }

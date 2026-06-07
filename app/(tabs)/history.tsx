@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   TouchableOpacity,
+  AppState,
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
@@ -51,11 +52,12 @@ export default function HistoryScreen() {
     return `${String(d.getDate()).padStart(2, '0')} ${months[d.getMonth()]} ${d.getFullYear()}`;
   };
 
-  async function fetchHistory() {
-    setLoading(true);
+  async function fetchHistory(isSilent = false, retryCount = 0) {
+    if (!isSilent && retryCount === 0) setLoading(true);
 
-    // Read directly from move_logs — NO join with yarn_rolls needed
-    // Snapshot fields are stored directly in move_logs.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+
     let query = supabase
       .from('move_logs')
       .select(`
@@ -70,7 +72,8 @@ export default function HistoryScreen() {
         moved_by
       `)
       .order('moved_at', { ascending: false })
-      .limit(200);
+      .limit(200)
+      .abortSignal(controller.signal);
 
     if (fromDate && fromDate.length === 10) {
       query = query.gte('moved_at', fromDate + 'T00:00:00.000Z');
@@ -79,14 +82,25 @@ export default function HistoryScreen() {
       query = query.lte('moved_at', toDate + 'T23:59:59.999Z');
     }
 
-    const { data, error } = await query;
+    try {
+      const { data, error } = await query;
+      clearTimeout(timeoutId);
 
-    if (!error && data) {
-      setLogs(data as unknown as HistoryItem[]);
-    } else if (error) {
-      console.error('Error fetching history:', error.message);
+      if (!error && data) {
+        setLogs(data as unknown as HistoryItem[]);
+      } else if (error) {
+        throw error;
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError' && retryCount < 1) {
+        console.warn('fetchHistory timed out, retrying...');
+        return fetchHistory(isSilent, retryCount + 1);
+      }
+      console.warn('fetchHistory error:', err.message);
+    } finally {
+      if (retryCount === 0) setLoading(false);
     }
-    setLoading(false);
   }
 
   // Reload history when screen is focused
@@ -96,9 +110,19 @@ export default function HistoryScreen() {
     }, [fromDate, toDate])
   );
 
+  // Background return listener
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        fetchHistory(true); // silent fetch
+      }
+    });
+    return () => subscription.remove();
+  }, [fromDate, toDate]);
+
   async function handleRefresh() {
     setRefreshing(true);
-    await fetchHistory();
+    await fetchHistory(true);
     setRefreshing(false);
   }
 

@@ -32,10 +32,20 @@ export type MoveLog = {
   moved_by: string | null;     // user id from auth.users
   moved_at: string;
   note: string | null;
-  action?: 'CREATE' | 'MOVE' | 'EDIT' | 'DELETE' | 'ROLE_CHANGE' | 'AREA_CREATE' | 'AREA_DISABLE' | 'AREA_ENABLE' | null;
-  yarn_code?: string | null;
-  from_area_code?: string | null;
-  to_area_code?: string | null;
+  action: 'CREATE' | 'MOVE' | 'EDIT' | 'DELETE' | 'ROLE_CHANGE' | 'AREA_CREATE' | 'AREA_DISABLE' | 'AREA_ENABLE' | null;
+  yarn_code: string | null;
+  from_area_code: string | null;
+  to_area_code: string | null;
+};
+
+/** User profile representation */
+export type Profile = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
+  role: 'worker' | 'supervisor';
+  created_at: string;
+  updated_at: string;
 };
 
 /** Area with a count of yarn rolls inside it (used on the board view) */

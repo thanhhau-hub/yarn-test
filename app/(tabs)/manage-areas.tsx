@@ -129,7 +129,7 @@ export default function ManageAreasScreen() {
           <View style={styles.formRow}>
             <TextInput
               style={[styles.textInput, { flex: 1, marginRight: 8 }]}
-              placeholder="Area Code (e.g. E1.5)"
+              placeholder="Area Code"
               placeholderTextColor="#94a3b8"
               value={newAreaCode}
               onChangeText={setNewAreaCode}

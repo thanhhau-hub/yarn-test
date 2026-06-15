@@ -16,7 +16,7 @@ import {
   ScrollView,
   Switch,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { supabase } from '../../lib/supabase';
@@ -199,6 +199,12 @@ function BoardScreen() {
     }
   }, [showUserMgmt]);
 
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch])
+  );
+
   // Logout
   async function handleLogout() {
     const performSignOut = async () => {
@@ -273,6 +279,7 @@ function BoardScreen() {
 
   // Keep track of the last target location for retry on failure
   const targetScrollLocation = useRef<{ sectionIndex: number; itemIndex: number } | null>(null);
+  const searchScrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Scroll to first prefix match
   const handleSearchScroll = useCallback(
@@ -308,7 +315,10 @@ function BoardScreen() {
         if (flatIdx !== -1) {
           const rowIndex = Math.floor(flatIdx / numColumns);
           targetScrollLocation.current = { sectionIndex: s, itemIndex: rowIndex };
-          setTimeout(() => {
+          if (searchScrollTimeoutRef.current) {
+            clearTimeout(searchScrollTimeoutRef.current);
+          }
+          searchScrollTimeoutRef.current = setTimeout(() => {
             try {
               sectionListRef.current?.scrollToLocation({
                 sectionIndex: s,
@@ -328,11 +338,11 @@ function BoardScreen() {
   );
 
   useEffect(() => {
-    if (searchLot) {
+    if (searchLot && groupedSectionsForList.length > 0) {
       setSearchQuery(searchLot);
       handleSearchScroll(searchLot);
     }
-  }, [searchLot]);
+  }, [searchLot, groupedSectionsForList, handleSearchScroll]);
 
   useEffect(() => {
     if (openAreaId && groupedSectionsForList.length > 0) {
@@ -518,7 +528,7 @@ function BoardScreen() {
             <Ionicons name="search-outline" size={16} color="#718096" style={styles.searchIcon} />
             <TextInput
               style={styles.searchInput}
-              placeholder="Type LOT or location to jump (e.g. 33, A1.5)..."
+              placeholder="Type LOT or location to jump..."
               value={searchQuery}
               onChangeText={handleSearchChange}
               autoCapitalize="characters"
@@ -558,7 +568,7 @@ function BoardScreen() {
                     sectionIndex: targetScrollLocation.current.sectionIndex,
                     itemIndex: targetScrollLocation.current.itemIndex,
                     viewPosition: 0.15,
-                    animated: true,
+                    animated: false,
                   });
                 }
               } catch (e) {}

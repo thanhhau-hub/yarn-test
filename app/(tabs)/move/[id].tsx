@@ -186,7 +186,7 @@ export default function MoveYarnScreen() {
           <TextInput
             ref={destinationInputRef}
             style={styles.input}
-            placeholder="Type to filter (e.g. A, A1, A1.5)"
+            placeholder="Type to filter"
             value={areaFilter}
             onChangeText={(text) => {
               handleAreaFilter(text);

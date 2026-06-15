@@ -239,7 +239,7 @@ export default function AddScreen() {
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.input}
-              placeholder="Type to filter (e.g. A, A1, A1.5)"
+              placeholder="Type to filter"
               value={locationQuery}
               onChangeText={(text) => {
                 setLocationQuery(text);
@@ -311,7 +311,7 @@ export default function AddScreen() {
             <TextInput
               ref={lotInputRef}
               style={styles.input}
-              placeholder="e.g. K446, 3310, 3312"
+              placeholder="Enter LOT number"
               value={lotNumber}
               onChangeText={setLotNumber}
               autoCapitalize="characters"

@@ -146,9 +146,12 @@ export function useBoard(session: Session | null | undefined) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'yarn_rolls' },
-        () => {
-          debouncedFetchBoard();
-        }
+        () => debouncedFetchBoard()
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'areas' },
+        () => debouncedFetchBoard()
       )
       .subscribe();
 
@@ -186,5 +189,6 @@ export function useBoard(session: Session | null | undefined) {
     };
   }, [userId, fetchBoard]);
 
-  return { areas, loading, error, refetch: () => fetchBoard(0, true) };
+  const refetch = useCallback(() => fetchBoard(0, true), [fetchBoard]);
+  return { areas, loading, error, refetch };
 }

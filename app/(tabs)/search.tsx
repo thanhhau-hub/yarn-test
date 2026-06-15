@@ -106,7 +106,7 @@ export default function SearchScreen() {
           <Ionicons name="search-outline" size={18} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.input}
-            placeholder="Enter exact LOT number (e.g. K446)"
+            placeholder="Enter exact LOT number"
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={handleSearch}

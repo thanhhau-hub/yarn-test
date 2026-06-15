@@ -104,7 +104,7 @@ export default function LoginScreen() {
                 <Ionicons name="mail-outline" size={20} color="#64748b" style={styles.inputIcon} />
                 <TextInput
                   style={styles.input}
-                  placeholder="operator@gmail.com"
+                  placeholder="Email"
                   placeholderTextColor="#94a3b8"
                   value={email}
                   onChangeText={setEmail}

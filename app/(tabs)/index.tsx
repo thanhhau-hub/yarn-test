@@ -329,7 +329,7 @@ function BoardScreen() {
             } catch (e) {
               console.warn('Scroll failed:', e);
             }
-          }, 150);
+          }, 300);
           break;
         }
       }
@@ -557,8 +557,9 @@ function BoardScreen() {
           refreshControl={<RefreshControl refreshing={loading} onRefresh={refetch} tintColor="#1b4d3e" />}
           stickySectionHeadersEnabled={true}
           showsVerticalScrollIndicator={true}
-          initialNumToRender={100}
-          maxToRenderPerBatch={50}
+          initialNumToRender={500}
+          windowSize={21}
+          maxToRenderPerBatch={100}
           onScrollToIndexFailed={(info) => {
             console.warn('Scroll to index failed, retrying...', info);
             setTimeout(() => {
@@ -572,7 +573,7 @@ function BoardScreen() {
                   });
                 }
               } catch (e) {}
-            }, 300);
+            }, 500);
           }}
           renderSectionHeader={({ section }) => {
             const sectionOccupied = section.flatList.filter(

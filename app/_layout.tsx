@@ -17,7 +17,7 @@ import '../assets/fonts/fonts.css';
  * navigations (tab switches, router.push, etc.).
  */
 function RootLayoutContent() {
-  const { session, loading, configError, status } = useAuth();
+  const { session, loading, configError, isGuest } = useAuth();
   const segments = useSegments();
   const router = useRouter();
   const hasRedirected = useRef(false);
@@ -33,36 +33,22 @@ function RootLayoutContent() {
 
     const currentScreen = segments[0];
     const isAuthScreen = currentScreen === 'login' || currentScreen === 'register';
-    const isPendingScreen = currentScreen === 'pending';
-    const isRejectedScreen = currentScreen === 'rejected';
 
-    if (!session) {
-      // Not logged in → go to login (unless already on login or register)
+    if (!session && !isGuest) {
+      // Not logged in and not guest → go to login (unless already on login or register)
       if (!isAuthScreen) {
         router.replace('/login');
         hasRedirected.current = true;
       }
-    } else if (status === 'pending') {
-      // Logged in but pending approval
-      if (!isPendingScreen) {
-        router.replace('/pending');
-        hasRedirected.current = true;
-      }
-    } else if (status === 'rejected') {
-      // Logged in but rejected
-      if (!isRejectedScreen) {
-        router.replace('/rejected');
-        hasRedirected.current = true;
-      }
-    } else if (status === 'active') {
-      // Logged in and active → go to home (if on auth/pending/rejected screen)
-      if (isAuthScreen || isPendingScreen || isRejectedScreen) {
+    } else {
+      // Logged in or guest → go to home (if on auth screen)
+      if (isAuthScreen) {
         router.replace('/(tabs)');
         hasRedirected.current = true;
       }
     }
-    // All other cases: session exists AND we're already on a valid screen → do nothing
-  }, [session, segments, loading, configError, status]);
+    // All other cases: session exists (or isGuest) AND we're already on a valid screen → do nothing
+  }, [session, segments, loading, configError, isGuest]);
 
   if (configError) {
     return (
@@ -81,8 +67,6 @@ function RootLayoutContent() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="register" options={{ headerShown: false }} />
-        <Stack.Screen name="pending" options={{ headerShown: false }} />
-        <Stack.Screen name="rejected" options={{ headerShown: false }} />
         <Stack.Screen name="area/[id]" options={{ title: 'Area Detail' }} />
         <Stack.Screen name="yarn/[id]" options={{ title: 'LOT History', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />
         <Stack.Screen name="move/[id]" options={{ title: 'Move LOT', headerStyle: { backgroundColor: '#1b4d3e' }, headerTintColor: '#fff', headerTitleStyle: { fontWeight: '700' } }} />

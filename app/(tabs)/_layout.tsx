@@ -8,8 +8,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
  * Tab navigation layout.
  * 
  * Dynamically shows/hides tabs based on user role:
- * - Supervisor: Board, Add, History
- * - Worker:     Board, History
+ * - Admin/Supervisor: Board, Add, History, Admin
+ * - Guest (User):     Board, History
  */
 export default function TabLayout() {
   const { role, loading } = useRole();
@@ -18,7 +18,8 @@ export default function TabLayout() {
   // Do not conditionally return a View here! It breaks Expo Router.
   // The layout must always return the <Tabs> component.
 
-  const isSupervisor = role === 'supervisor';
+  const canManage = role === 'supervisor' || role === 'admin';
+  const isAdmin = role === 'admin';
 
   return (
     <Tabs
@@ -47,14 +48,14 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Add tab: only visible to Supervisors */}
+      {/* Add tab: only visible to Supervisors/Admins */}
       <Tabs.Screen
         name="add"
         options={{
           title: 'Add',
           headerTitle: 'Add Lot',
-          // Hide from Workers by removing it from the tab bar
-          href: isSupervisor ? undefined : null,
+          // Hide from Guests by removing it from the tab bar
+          href: canManage ? undefined : null,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="add-circle-outline" size={size} color={color} />
           ),
@@ -72,15 +73,15 @@ export default function TabLayout() {
         }}
       />
 
-      {/* Approval tab: only visible to Supervisors */}
+      {/* Admin tab: only visible to Supervisors/Admins */}
       <Tabs.Screen
-        name="approval"
+        name="admin"
         options={{
-          title: 'Approval',
-          headerTitle: 'User Approvals',
-          href: isSupervisor ? undefined : null,
+          title: 'Manage',
+          headerTitle: 'Management Dashboard',
+          href: isAdmin ? undefined : null,
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people-outline" size={size} color={color} />
+            <Ionicons name="settings-outline" size={size} color={color} />
           ),
         }}
       />

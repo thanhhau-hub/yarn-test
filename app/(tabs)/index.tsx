@@ -26,7 +26,9 @@ import { useAuth } from '../../context/AuthContext';
 import { AreaWithCount, Area, Profile } from '../../types';
 import { Ionicons } from '@expo/vector-icons';
 
-// Strip duplicate suffix to get base LOT code (K446-1 → K446)
+// Strip duplicate suffix to get base LOT code (K446-1 → K446).
+// Only removes trailing "-<number>" to handle duplicate roll suffixes.
+// Does NOT normalise "/" or "." — those are part of the real LOT code.
 function cleanLotNumber(lot: string) {
   if (!lot) return '';
   return lot.replace(/-\d+$/, '');
@@ -150,7 +152,7 @@ function cleanLotNumber(lot: string) {
 function BoardScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ openAreaId?: string; searchLot?: string }>();
-  const { session } = useAuth();
+  const { session, isGuest, setGuestMode } = useAuth();
   const { areas, loading, error, refetch } = useBoard(session);
   const { role, loading: roleLoading } = useRole();
   const sectionListRef = useRef<SectionList>(null);
@@ -159,12 +161,17 @@ function BoardScreen() {
   const searchLot = params.searchLot;
   const openAreaId = params.openAreaId;
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const [searchLotInput, setSearchLotInput] = useState('');
+  const [searchColorInput, setSearchColorInput] = useState('');
+  const [searchDescInput, setSearchDescInput] = useState('');
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
 
   // Responsive grid based on screen width
   const [numColumns, setNumColumns] = useState(4);
   const [columnWidth, setColumnWidth] = useState(65);
+  // Ref mirrors columnWidth so getItemLayout (called outside render) always has current value
+  const columnWidthRef = useRef(65);
+  const numColumnsRef = useRef(4);
 
   // Supervisor Panels State
   // Removed showAreaMgmt state (Worker role should not access Manage Areas)
@@ -173,11 +180,63 @@ function BoardScreen() {
   const [isEditingLot, setIsEditingLot] = useState(false);
 
   // Areas Management panel input
+  const [showAreaMgmt, setShowAreaMgmt] = useState(false);
   const [newAreaCode, setNewAreaCode] = useState('');
   const [newAreaLabel, setNewAreaLabel] = useState('');
   const [savingArea, setSavingArea] = useState(false);
   const [allAreas, setAllAreas] = useState<Area[]>([]);
   const [loadingAreas, setLoadingAreas] = useState(false);
+
+  const fetchAreasForMgmt = useCallback(async () => {
+    setLoadingAreas(true);
+    const { data, error } = await supabase.from('areas').select('*').order('code', { ascending: true });
+    if (!error && data) setAllAreas(data);
+    setLoadingAreas(false);
+  }, []);
+
+  useEffect(() => {
+    if (showAreaMgmt) fetchAreasForMgmt();
+  }, [showAreaMgmt]);
+
+  const handleSaveArea = async () => {
+    if (!newAreaCode.trim()) {
+      Alert.alert('Missing Info', 'Area Code is required.');
+      return;
+    }
+    setSavingArea(true);
+    const { error } = await supabase.from('areas').insert({
+      code: newAreaCode.trim().toUpperCase(),
+      label: newAreaLabel.trim() || null,
+    });
+    setSavingArea(false);
+    if (error) {
+      Alert.alert('Error', error.message);
+    } else {
+      setNewAreaCode('');
+      setNewAreaLabel('');
+      fetchAreasForMgmt();
+      Alert.alert('Success', 'Area created successfully!');
+    }
+  };
+
+  const handleDeleteArea = async (areaId: string, areaCode: string) => {
+    const { count } = await supabase.from('yarns').select('*', { count: 'exact', head: true }).eq('area_id', areaId);
+    if (count && count > 0) {
+      Alert.alert('Cannot Delete', `Area ${areaCode} still contains rolls. Must be completely empty to delete.`);
+      return;
+    }
+    Alert.alert('Confirm Delete', `Are you sure you want to delete area ${areaCode}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+          const { error } = await supabase.from('areas').delete().eq('id', areaId);
+          if (error) Alert.alert('Error', error.message);
+          else {
+            fetchAreasForMgmt();
+            Alert.alert('Success', 'Area deleted successfully!');
+          }
+      }}
+    ]);
+  };
 
   // Users Management panel list
   const [profiles, setProfiles] = useState<Profile[]>([]);
@@ -204,6 +263,8 @@ function BoardScreen() {
 
     setNumColumns(cols);
     setColumnWidth(cellWidth);
+    columnWidthRef.current = cellWidth;
+    numColumnsRef.current = cols;
   }, [containerWidth]);
 
   const onContainerLayout = (event: any) => {
@@ -213,6 +274,15 @@ function BoardScreen() {
 
   // Modal state
   const [selectedArea, setSelectedArea] = useState<AreaWithCount | null>(null);
+  const [cachedArea, setCachedArea] = useState<AreaWithCount | null>(null);
+  const [areaToRestore, setAreaToRestore] = useState<AreaWithCount | null>(null);
+
+  useEffect(() => {
+    if (selectedArea) setCachedArea(selectedArea);
+  }, [selectedArea]);
+
+  const displayArea = selectedArea || cachedArea;
+
   const handleCloseModal = () => setSelectedArea(null);
 
   // Delete Confirmation State
@@ -238,7 +308,11 @@ function BoardScreen() {
   async function handleLogout() {
     const performSignOut = async () => {
       try {
-        await supabase.auth.signOut();
+        // Clear guest mode first (no-op if not guest)
+        await setGuestMode(false);
+        if (session) {
+          await supabase.auth.signOut();
+        }
         router.replace('/login');
       } catch {
         Alert.alert('Error', 'Failed to sign out. Please try again.');
@@ -260,8 +334,9 @@ function BoardScreen() {
       const secA = a.code[0];
       const secB = b.code[0];
       if (secA !== secB) return secA.localeCompare(secB);
-      const restA = a.code.substring(1).split('.');
-      const restB = b.code.substring(1).split('.');
+      // Split by dot, slash, or hyphen to support multiple formats (e.g., D14.1, D14/1, D14-1)
+      const restA = a.code.substring(1).split(/[.\/-]/);
+      const restB = b.code.substring(1).split(/[.\/-]/);
       const rowA = parseInt(restA[0], 10) || 0;
       const rowB = parseInt(restB[0], 10) || 0;
       if (rowA !== rowB) return rowA - rowB;
@@ -285,62 +360,59 @@ function BoardScreen() {
         for (let i = 0; i < flatList.length; i += numColumns) {
           rows.push(flatList.slice(i, i + numColumns));
         }
-        return { key, title: `Section ${key}`, data: rows, flatList };
+        return { key, title: `Rack ${key}`, data: rows, flatList };
       });
   }, [sortedAreas, numColumns]);
 
   // ── PREFIX-BASED search matching ──────────────────────────────
-  const activeSearch = searchQuery.trim().toLowerCase();
-  const isSearchActive = activeSearch.length > 0;
+  const activeLot = searchLotInput.trim().toLowerCase();
+  const activeColor = searchColorInput.trim().toLowerCase();
+  const activeDesc = searchDescInput.trim().toLowerCase();
+  const isSearchActive = activeLot.length > 0 || activeColor.length > 0 || activeDesc.length > 0;
 
   const isCardMatched = useCallback(
     (area: AreaWithCount) => {
-      if (!activeSearch) return false;
-      if (area.code.toLowerCase().startsWith(activeSearch)) return true;
+      if (!isSearchActive) return false;
       return (
-        area.yarns?.some((yarn: any) =>
-          cleanLotNumber(yarn.yarn_code).toLowerCase().startsWith(activeSearch)
-        ) ?? false
+        area.yarns?.some((yarn: any) => {
+          const lotMatches = !activeLot || cleanLotNumber(yarn.yarn_code).toLowerCase().startsWith(activeLot);
+          const colorMatches = !activeColor || (yarn.color || '').toLowerCase().includes(activeColor);
+          const descMatches = !activeDesc || (yarn.description || '').toLowerCase().includes(activeDesc);
+          return lotMatches && colorMatches && descMatches;
+        }) ?? false
       );
     },
-    [activeSearch]
+    [isSearchActive, activeLot, activeColor, activeDesc]
   );
 
   // Keep track of the last target location for retry on failure
   const targetScrollLocation = useRef<{ sectionIndex: number; itemIndex: number } | null>(null);
   const searchScrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Scroll to first prefix match
+  // Scroll to first match based on all conditions
   const handleSearchScroll = useCallback(
-    (text: string) => {
-      const query = text.trim().toLowerCase();
-      if (!query || groupedSectionsForList.length === 0) return;
+    (qLot: string, qColor: string, qDesc: string) => {
+      if (containerWidth === null) return;
+      const lot = qLot.trim().toLowerCase();
+      const col = qColor.trim().toLowerCase();
+      const des = qDesc.trim().toLowerCase();
+      if (!lot && !col && !des) return;
+      if (groupedSectionsForList.length === 0) return;
 
-      let matchedArea = sortedAreas.find((area) =>
-        area.yarns?.some(
-          (y: any) => cleanLotNumber(y.yarn_code).toLowerCase() === query
-        )
+      const matchedArea = sortedAreas.find((area) =>
+        area.yarns?.some((y: any) => {
+          const lotMatches = !lot || cleanLotNumber(y.yarn_code).toLowerCase().startsWith(lot);
+          const colorMatches = !col || (y.color || '').toLowerCase().includes(col);
+          const descMatches = !des || (y.description || '').toLowerCase().includes(des);
+          return lotMatches && colorMatches && descMatches;
+        })
       );
-
-      if (!matchedArea) {
-        matchedArea = sortedAreas.find((area) =>
-          area.yarns?.some((y: any) =>
-            cleanLotNumber(y.yarn_code).toLowerCase().startsWith(query)
-          )
-        );
-      }
-
-      if (!matchedArea) {
-        matchedArea = sortedAreas.find((area) =>
-          area.code.toLowerCase().startsWith(query)
-        );
-      }
 
       if (!matchedArea) return;
 
       for (let s = 0; s < groupedSectionsForList.length; s++) {
         const sec = groupedSectionsForList[s];
-        const flatIdx = sec.flatList.findIndex((a) => a.id === matchedArea!.id);
+        const flatIdx = sec.flatList.findIndex((a) => a.id === matchedArea.id);
         if (flatIdx !== -1) {
           const rowIndex = Math.floor(flatIdx / numColumns);
           targetScrollLocation.current = { sectionIndex: s, itemIndex: rowIndex };
@@ -352,7 +424,8 @@ function BoardScreen() {
               sectionListRef.current?.scrollToLocation({
                 sectionIndex: s,
                 itemIndex: rowIndex,
-                viewPosition: 0.15,
+                viewPosition: 0,
+                viewOffset: 30,
                 animated: true,
               });
             } catch (e) {
@@ -363,18 +436,18 @@ function BoardScreen() {
         }
       }
     },
-    [groupedSectionsForList, numColumns, sortedAreas]
+    [groupedSectionsForList, numColumns, sortedAreas, containerWidth]
   );
 
   useEffect(() => {
-    if (searchLot && groupedSectionsForList.length > 0) {
-      setSearchQuery(searchLot);
-      handleSearchScroll(searchLot);
+    if (containerWidth !== null && searchLot && groupedSectionsForList.length > 0) {
+      setSearchLotInput(searchLot);
+      handleSearchScroll(searchLot, searchColorInput, searchDescInput);
     }
-  }, [searchLot, groupedSectionsForList, handleSearchScroll]);
+  }, [searchLot, groupedSectionsForList, containerWidth]);
 
   useEffect(() => {
-    if (openAreaId && groupedSectionsForList.length > 0) {
+    if (containerWidth !== null && openAreaId && groupedSectionsForList.length > 0) {
       const targetArea = sortedAreas.find((a) => a.id === openAreaId);
       if (targetArea) {
         setSelectedArea(targetArea);
@@ -389,7 +462,8 @@ function BoardScreen() {
                 sectionListRef.current?.scrollToLocation({
                   sectionIndex: s,
                   itemIndex: rowIndex,
-                  viewPosition: 0.15,
+                  viewPosition: 0,
+                  viewOffset: 30,
                   animated: true,
                 });
               } catch (e) {
@@ -401,32 +475,43 @@ function BoardScreen() {
         }
       }
     }
-  }, [openAreaId, groupedSectionsForList, numColumns, sortedAreas]);
-
-  const handleSearchChange = (text: string) => {
-    setSearchQuery(text);
-    handleSearchScroll(text);
-  };
+  }, [openAreaId, groupedSectionsForList, numColumns, sortedAreas, containerWidth]);
 
   const handleClearSearch = () => {
-    setSearchQuery('');
+    setSearchLotInput('');
+    setSearchColorInput('');
+    setSearchDescInput('');
     router.setParams({ searchLot: undefined, openAreaId: undefined });
   };
 
   // ── Delete Lot ─────────────────────────────────────────────────
   const confirmDeleteLot = (yarn: any, areaCode: string) => {
-    if (role !== 'supervisor') {
-      Alert.alert('Supervisor Required', 'Only supervisors can delete lots.');
+    if (role !== 'supervisor' && role !== 'admin') {
+      Alert.alert('Permission Required', 'Only supervisors and admins can delete lots.');
       return;
     }
-    setDeleteConfirmYarn(yarn);
-    setDeleteConfirmArea(areaCode);
+    setAreaToRestore(selectedArea);
+    setSelectedArea(null);
+    setTimeout(() => {
+      setDeleteConfirmYarn(yarn);
+      setDeleteConfirmArea(areaCode);
+    }, 50);
+  };
+
+  const cancelDeleteLot = () => {
+    setDeleteConfirmYarn(null);
+    if (areaToRestore) {
+      setTimeout(() => {
+        setSelectedArea(areaToRestore);
+        setAreaToRestore(null);
+      }, 50);
+    }
   };
 
   const executeDelete = async () => {
     if (!deleteConfirmYarn) return;
-    if (role !== 'supervisor') {
-      Alert.alert('Supervisor Required', 'Only supervisors can delete lots.');
+    if (role !== 'supervisor' && role !== 'admin') {
+      Alert.alert('Permission Required', 'Only supervisors and admins can delete lots.');
       return;
     }
     setIsDeleting(true);
@@ -471,6 +556,7 @@ function BoardScreen() {
 
       setDeleteConfirmYarn(null);
       setDeleteConfirmArea('');
+      setAreaToRestore(null);
       handleCloseModal();
       refetch();
       Alert.alert('Success', 'Lot successfully deleted.');
@@ -489,7 +575,7 @@ function BoardScreen() {
   }, []);
 
   const handleToggleUserRole = useCallback(async (profileItem: Profile) => {
-    if (role !== 'supervisor') { Alert.alert('Supervisor Required', 'Only supervisors can manage users.'); return; }
+    if (role !== 'supervisor' && role !== 'admin') { Alert.alert('Permission Required', 'Not allowed.'); return; }
     const nextRole = profileItem.role === 'supervisor' ? 'worker' : 'supervisor';
     setUpdatingRoleUserId(profileItem.id);
     try {
@@ -532,12 +618,21 @@ function BoardScreen() {
                 <View style={[styles.roleBadge, styles.roleSupervisor]}>
                   <Text style={styles.roleBadgeText}>Supervisor Mode</Text>
                 </View>
+              ) : role === 'admin' ? (
+                <View style={[styles.roleBadge, styles.roleAdmin]}>
+                  <Text style={styles.roleBadgeText}>ADMIN MODE</Text>
+                </View>
               ) : (
                 <View style={[styles.roleBadge, styles.roleWorker]}>
                   <Text style={styles.roleBadgeText}>Worker Mode</Text>
                 </View>
               )}
-
+              {(role === 'supervisor' || role === 'admin') && (
+                <TouchableOpacity style={styles.manageAreasBtn} onPress={() => setShowAreaMgmt(true)}>
+                  <Ionicons name="location" size={12} color="#065f46" />
+                  <Text style={styles.manageAreasBtnText}>Manage Areas</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} activeOpacity={0.8}>
@@ -550,26 +645,49 @@ function BoardScreen() {
 
         {/* Real-time Search Bar */}
         <View style={styles.searchContainer}>
-          <View style={styles.searchInputWrapper}>
-            <Ionicons name="search-outline" size={16} color="#718096" style={styles.searchIcon} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Type LOT or location to jump..."
-              value={searchQuery}
-              onChangeText={handleSearchChange}
-              autoCapitalize="characters"
-              placeholderTextColor="#a0aec0"
-              returnKeyType="search"
-            />
-            {searchQuery.length > 0 && (
-              <TouchableOpacity onPress={handleClearSearch} style={styles.searchClear}>
-                <Ionicons name="close-circle" size={18} color="#718096" />
+          <View style={styles.searchRow}>
+            <View style={[styles.searchInputWrapper, { flex: 1 }]}>
+              <Ionicons name="barcode-outline" size={14} color="#718096" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Lot"
+                value={searchLotInput}
+                onChangeText={(t) => { setSearchLotInput(t); handleSearchScroll(t, searchColorInput, searchDescInput); }}
+                autoCapitalize="characters"
+                placeholderTextColor="#a0aec0"
+              />
+            </View>
+            <View style={[styles.searchInputWrapper, { flex: 1, marginLeft: 6 }]}>
+              <Ionicons name="color-palette-outline" size={14} color="#718096" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Color"
+                value={searchColorInput}
+                onChangeText={(t) => { setSearchColorInput(t); handleSearchScroll(searchLotInput, t, searchDescInput); }}
+                autoCapitalize="none"
+                placeholderTextColor="#a0aec0"
+              />
+            </View>
+            <View style={[styles.searchInputWrapper, { flex: 1, marginLeft: 6 }]}>
+              <Ionicons name="text-outline" size={14} color="#718096" style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Desc"
+                value={searchDescInput}
+                onChangeText={(t) => { setSearchDescInput(t); handleSearchScroll(searchLotInput, searchColorInput, t); }}
+                autoCapitalize="none"
+                placeholderTextColor="#a0aec0"
+              />
+            </View>
+            {isSearchActive && (
+              <TouchableOpacity onPress={handleClearSearch} style={styles.searchClearBtn}>
+                <Ionicons name="close-circle" size={18} color="#a7f3d0" />
               </TouchableOpacity>
             )}
           </View>
           {isSearchActive && (
             <Text style={styles.searchHint}>
-              Showing matches starting with "{searchQuery.trim().toUpperCase()}"
+              Filtering by: {activeLot ? `Lot: ${activeLot}  ` : ''}{activeColor ? `Color: ${activeColor}  ` : ''}{activeDesc ? `Desc: ${activeDesc}` : ''}
             </Text>
           )}
         </View>
@@ -583,23 +701,62 @@ function BoardScreen() {
           refreshControl={<RefreshControl refreshing={loading} onRefresh={refetch} tintColor="#1b4d3e" />}
           stickySectionHeadersEnabled={true}
           showsVerticalScrollIndicator={true}
-          initialNumToRender={500}
+          initialNumToRender={60}
           windowSize={21}
-          maxToRenderPerBatch={100}
+          maxToRenderPerBatch={50}
+          // getItemLayout enables reliable scrollToLocation for ANY row, even un-rendered ones.
+          // Heights: section header = 30px, each grid row = columnWidth + 2px (paddingVertical:1 x2)
+          getItemLayout={(data, index) => {
+            const SECTION_HEADER_HEIGHT = 30;
+            const ROW_HEIGHT = columnWidthRef.current + 2; // paddingVertical:1 top+bottom
+
+            // Build a flat map of all items across sections to find offset
+            let offset = 0;
+            let flatIndex = 0;
+            for (const section of groupedSectionsForList) {
+              // Section header
+              if (flatIndex === index) {
+                return { length: SECTION_HEADER_HEIGHT, offset, index };
+              }
+              offset += SECTION_HEADER_HEIGHT;
+              flatIndex++;
+
+              // Rows in this section
+              for (let r = 0; r < section.data.length; r++) {
+                if (flatIndex === index) {
+                  return { length: ROW_HEIGHT, offset, index };
+                }
+                offset += ROW_HEIGHT;
+                flatIndex++;
+              }
+
+              // Section footer (height is 0, but occupies 1 index slot)
+              if (flatIndex === index) {
+                return { length: 0, offset, index };
+              }
+              flatIndex++;
+            }
+            // Fallback (should not happen)
+            return { length: ROW_HEIGHT, offset: 0, index };
+          }}
           onScrollToIndexFailed={(info) => {
-            console.warn('Scroll to index failed, retrying...', info);
-            setTimeout(() => {
+            // With getItemLayout this should rarely fire, but handle it gracefully
+            const retry = () => {
               try {
                 if (targetScrollLocation.current) {
                   sectionListRef.current?.scrollToLocation({
                     sectionIndex: targetScrollLocation.current.sectionIndex,
                     itemIndex: targetScrollLocation.current.itemIndex,
-                    viewPosition: 0.15,
+                    viewPosition: 0,
+                    viewOffset: 30,
                     animated: false,
                   });
                 }
               } catch (e) {}
-            }, 500);
+            };
+            // Retry twice: immediately then after render settles
+            setTimeout(retry, 100);
+            setTimeout(retry, 600);
           }}
           renderSectionHeader={({ section }) => {
             const sectionOccupied = section.flatList.filter(
@@ -609,7 +766,7 @@ function BoardScreen() {
               <View style={styles.sectionHeader}>
                 <View style={styles.sectionHeaderLeft}>
                   <View style={styles.sectionDot} />
-                  <Text style={styles.sectionTitle}>Section {section.key}</Text>
+                  <Text style={styles.sectionTitle}>Rack {section.key}</Text>
                 </View>
                 <Text style={styles.sectionCount}>
                   {sectionOccupied}/{section.flatList.length}
@@ -642,7 +799,7 @@ function BoardScreen() {
                     onPress={() => {
                       if (hasYarn) {
                         setSelectedArea(area);
-                      } else if (role === 'supervisor') {
+                      } else if (role === 'supervisor' || role === 'admin') {
                         // Navigate to Add tab with location pre-selected
                         router.push({ pathname: '/(tabs)/add', params: { areaId: area.id } });
                       } else {
@@ -675,10 +832,10 @@ function BoardScreen() {
               {/* Modal Header */}
               <View style={styles.modalHeader}>
                 <View>
-                  <Text style={styles.modalTitle}>{selectedArea?.code}</Text>
+                  <Text style={styles.modalTitle}>{displayArea?.code}</Text>
                   <Text style={styles.modalSubtitle}>
-                    {selectedArea?.yarn_count
-                      ? `${selectedArea.yarn_count} LOT(s) stored`
+                    {displayArea?.yarn_count
+                      ? `${displayArea.yarn_count} LOT(s) stored`
                       : 'Empty rack'}
                   </Text>
                 </View>
@@ -690,8 +847,8 @@ function BoardScreen() {
               {/* Lot Cards with Actions */}
               <ScrollView style={styles.modalScroll}>
                 <View style={styles.modalContent}>
-                  {selectedArea?.yarns && selectedArea.yarns.length > 0 ? (
-                    selectedArea.yarns.map((yarn) => {
+                  {displayArea?.yarns && displayArea.yarns.length > 0 ? (
+                    displayArea.yarns.map((yarn) => {
                       const cleanedLot = cleanLotNumber(yarn.yarn_code);
                       return (
                         <View key={yarn.id} style={styles.lotDetailCard}>
@@ -704,23 +861,25 @@ function BoardScreen() {
                           </View>
 
                           <View style={styles.lotActions}>
-                            {/* Move (Available to Workers and Supervisors) */}
-                            <TouchableOpacity
-                              style={styles.actionBtnPrimary}
-                              onPress={() => {
-                                handleCloseModal();
-                                router.push(`/move/${yarn.id}`);
-                              }}
-                            >
-                              <Ionicons name="swap-horizontal" size={14} color="#ffffff" />
-                              <Text style={styles.actionBtnPrimaryText}>Move</Text>
-                            </TouchableOpacity>
+                            {/* Move (Available to Supervisors) */}
+                            {(role === 'supervisor' || role === 'admin') && (
+                              <TouchableOpacity
+                                style={styles.actionBtnPrimary}
+                                onPress={() => {
+                                  handleCloseModal();
+                                  router.push(`/move/${yarn.id}`);
+                                }}
+                              >
+                                <Ionicons name="swap-horizontal" size={14} color="#ffffff" />
+                                <Text style={styles.actionBtnPrimaryText}>Move</Text>
+                              </TouchableOpacity>
+                            )}
 
                             {/* Delete (Supervisor only) */}
-                            {role === 'supervisor' && (
+                            {(role === 'supervisor' || role === 'admin') && (
                               <TouchableOpacity
                                 style={styles.actionBtnDelete}
-                                onPress={() => confirmDeleteLot(yarn, selectedArea.code)}
+                                onPress={() => confirmDeleteLot(yarn, displayArea?.code || '')}
                               >
                                 <Ionicons name="trash-outline" size={14} color="#ffffff" />
                                 <Text style={styles.actionBtnDeleteText}>Delete</Text>
@@ -746,14 +905,14 @@ function BoardScreen() {
                     <View style={styles.emptyRackContainer}>
                       <Ionicons name="cube-outline" size={36} color="#cbd5e1" />
                       <Text style={styles.emptyRackText}>This rack is empty</Text>
-                      {role === 'supervisor' && (
+                      {(role === 'supervisor' || role === 'admin') && (
                         <TouchableOpacity
                           style={styles.addHereButton}
                           onPress={() => {
                             handleCloseModal();
                             router.push({
                               pathname: '/(tabs)/add',
-                              params: { areaId: selectedArea?.id },
+                              params: { areaId: displayArea?.id },
                             });
                           }}
                         >
@@ -779,7 +938,7 @@ function BoardScreen() {
           visible={deleteConfirmYarn !== null}
           transparent={true}
           animationType="fade"
-          onRequestClose={() => { if (!isDeleting) setDeleteConfirmYarn(null); }}
+          onRequestClose={() => { if (!isDeleting) cancelDeleteLot(); }}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.confirmCard}>
@@ -807,7 +966,7 @@ function BoardScreen() {
               <View style={styles.confirmActions}>
                 <TouchableOpacity
                   style={styles.btnCancel}
-                  onPress={() => setDeleteConfirmYarn(null)}
+                  onPress={cancelDeleteLot}
                   disabled={isDeleting}
                 >
                   <Text style={styles.btnCancelText}>Cancel</Text>
@@ -878,6 +1037,60 @@ function BoardScreen() {
           </View>
         </Modal>
 
+        {/* Manage Areas Full Screen Modal */}
+        <Modal visible={showAreaMgmt} animationType="slide" onRequestClose={() => setShowAreaMgmt(false)}>
+          <View style={styles.areaModalContainer}>
+            <View style={styles.areaModalHeader}>
+              <Text style={styles.areaModalTitle}>Manage Areas</Text>
+              <TouchableOpacity onPress={() => setShowAreaMgmt(false)} style={styles.areaModalCloseBtn}>
+                <Ionicons name="close" size={24} color="#ffffff" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.areaModalContent}>
+              <View style={styles.areaFormCard}>
+                <Text style={styles.areaFormTitle}>Create New Area / Rack</Text>
+                <View style={styles.areaFormRow}>
+                  <TextInput
+                    style={styles.areaFormInputCode}
+                    placeholder="Code (e.g. A1.1)"
+                    value={newAreaCode}
+                    onChangeText={setNewAreaCode}
+                    autoCapitalize="characters"
+                  />
+                  <TextInput
+                    style={styles.areaFormInputLabel}
+                    placeholder="Label (Optional)"
+                    value={newAreaLabel}
+                    onChangeText={setNewAreaLabel}
+                  />
+                  <TouchableOpacity style={styles.areaFormBtn} onPress={handleSaveArea} disabled={savingArea}>
+                    {savingArea ? <ActivityIndicator size="small" color="#fff" /> : <Text style={styles.areaFormBtnText}>Add</Text>}
+                  </TouchableOpacity>
+                </View>
+              </View>
+              
+              <Text style={styles.areaListTitle}>All Areas ({allAreas.length})</Text>
+              {loadingAreas ? (
+                <ActivityIndicator size="large" color="#1b4d3e" style={{ marginTop: 20 }} />
+              ) : (
+                <View style={styles.areaList}>
+                  {allAreas.map(a => (
+                    <View key={a.id} style={styles.areaListItem}>
+                      <View>
+                        <Text style={styles.areaItemCode}>{a.code}</Text>
+                        {a.label && <Text style={styles.areaItemLabel}>{a.label}</Text>}
+                      </View>
+                      <TouchableOpacity onPress={() => handleDeleteArea(a.id, a.code)} style={styles.areaItemDeleteBtn}>
+                        <Ionicons name="trash" size={16} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </Modal>
+
       </View>
     </View>
   );
@@ -907,6 +1120,7 @@ const styles = StyleSheet.create({
   },
   roleWorker: { backgroundColor: '#475569' },
   roleSupervisor: { backgroundColor: '#d97706' },
+  roleAdmin: { backgroundColor: '#dc2626' },
   roleBadgeText: { color: '#ffffff', fontSize: 8, fontWeight: '800', textTransform: 'uppercase' },
 
   logoutButton: {
@@ -949,13 +1163,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#ffffff',
     borderRadius: 8,
-    paddingHorizontal: 10,
-    height: 40,
+    paddingHorizontal: 8,
+    height: 36,
   },
-  searchIcon: { marginRight: 6 },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  searchClearBtn: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  searchIcon: { marginRight: 4 },
   searchInput: {
     flex: 1,
-    fontSize: 13,
+    fontSize: 12,
     color: '#1e293b',
     paddingVertical: 0,
     height: '100%',
@@ -976,11 +1198,11 @@ const styles = StyleSheet.create({
 
   // Section Header
   sectionHeader: {
+    height: 30,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 12,
-    paddingVertical: 4,
     backgroundColor: '#e8f5e9',
   },
   sectionHeaderLeft: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -1377,5 +1599,124 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   roleToggleBtnText: { color: '#059669', fontSize: 10, fontWeight: '700' },
+  
+  manageAreasBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ecfdf5',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    gap: 4,
+  },
+  manageAreasBtnText: {
+    color: '#065f46',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  areaModalContainer: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+  },
+  areaModalHeader: {
+    backgroundColor: '#1b4d3e',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingTop: 50,
+    paddingBottom: 16,
+  },
+  areaModalTitle: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+  areaModalCloseBtn: {
+    padding: 4,
+  },
+  areaModalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  areaFormCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  areaFormTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#334155',
+    marginBottom: 12,
+  },
+  areaFormRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  areaFormInputCode: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    height: 40,
+  },
+  areaFormInputLabel: {
+    flex: 2,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    height: 40,
+  },
+  areaFormBtn: {
+    backgroundColor: '#059669',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  areaFormBtnText: {
+    color: '#ffffff',
+    fontWeight: 'bold',
+  },
+  areaListTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    marginBottom: 12,
+  },
+  areaList: {
+    backgroundColor: '#ffffff',
+    borderRadius: 10,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  areaListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  areaItemCode: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  areaItemLabel: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  areaItemDeleteBtn: {
+    padding: 8,
+  },
 });
 export default BoardScreen;

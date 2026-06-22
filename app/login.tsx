@@ -16,6 +16,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { supabase } from '../lib/supabase';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * Premium Enterprise-Grade Login Screen.
@@ -24,6 +25,7 @@ import { useRouter } from 'expo-router';
  */
 export default function LoginScreen() {
   const router = useRouter();
+  const { setGuestMode } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -68,6 +70,18 @@ export default function LoginScreen() {
     }
   }
 
+  async function handleGuestAuth() {
+    setLoading(true);
+    try {
+      await setGuestMode(true);
+      router.replace('/(tabs)');
+    } catch (err) {
+      Alert.alert('Error', 'Failed to enter guest mode.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
@@ -94,10 +108,26 @@ export default function LoginScreen() {
 
           {/* Form Card */}
           <View style={styles.card}>
-            <Text style={styles.formTitle}>Operator Sign In</Text>
+            <Text style={styles.formTitle}>Welcome to Yarn Tracker</Text>
             <Text style={styles.formSubtitle}>
-              Enter your credentials to access the yarn whiteboard.
+              Please select your access method below.
             </Text>
+
+            {/* Guest Login */}
+            <TouchableOpacity
+              style={[styles.button, styles.guestButton, loading && styles.buttonDisabled]}
+              onPress={handleGuestAuth}
+              disabled={loading}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.guestButtonText}>CONTINUE AS GUEST</Text>
+            </TouchableOpacity>
+
+            <View style={styles.divider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerText}>OR SIGN IN</Text>
+              <View style={styles.dividerLine} />
+            </View>
 
             <View style={styles.inputWrapper}>
               <Text style={styles.inputLabel}>Work Email</Text>
@@ -158,14 +188,6 @@ export default function LoginScreen() {
               )}
             </TouchableOpacity>
 
-            <View style={styles.toggleContainer}>
-              <Text style={styles.toggleText}>
-                Don't have an account?{' '}
-              </Text>
-              <TouchableOpacity onPress={() => router.push('/register')} disabled={loading}>
-                <Text style={styles.toggleTextLink}>Sign Up</Text>
-              </TouchableOpacity>
-            </View>
           </View>
 
           {/* Footer Note */}
@@ -300,6 +322,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     letterSpacing: 1.5,
+  },
+  guestButton: {
+    backgroundColor: '#e8f5e9',
+    marginTop: 0,
+    marginBottom: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+  },
+  guestButtonText: {
+    color: '#047857',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 24,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#e2e8f0',
+  },
+  dividerText: {
+    paddingHorizontal: 12,
+    fontSize: 11,
+    color: '#94a3b8',
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   loadingContainer: {
     flexDirection: 'row',

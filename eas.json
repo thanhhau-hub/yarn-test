@@ -5,12 +5,20 @@
   "build": {
     "preview": {
       "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://yygagjaygsutphsvyubl.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_F4Si52ZMx5FKIMj-4t3cZA_j87Hmmro"
+      },
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
       "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://yygagjaygsutphsvyubl.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_F4Si52ZMx5FKIMj-4t3cZA_j87Hmmro"
+      },
       "android": {
         "buildType": "app-bundle"
       }

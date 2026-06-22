@@ -9,7 +9,6 @@ import {
   ScrollView,
   ActivityIndicator,
   Modal,
-  Pressable,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { supabase } from '../../lib/supabase';
@@ -34,7 +33,7 @@ export default function AddScreen() {
   const [locationQuery, setLocationQuery] = useState('');
   const [selectedAreaId, setSelectedAreaId] = useState<string | null>(null);
   const [selectedAreaCode, setSelectedAreaCode] = useState<string>('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
+
 
   const [allAreas, setAllAreas] = useState<Area[]>([]);
   const [loading, setLoading] = useState(false);
@@ -70,7 +69,7 @@ export default function AddScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      if (role === 'supervisor') loadAreas();
+      if (role === 'supervisor' || role === 'admin') loadAreas();
       setLotNumber('');
       setIsConfirming(false);
       setIsSuccess(false);
@@ -78,18 +77,13 @@ export default function AddScreen() {
     }, [params.areaId, role])
   );
 
-  // Filtered list (max 5 shown in dropdown)
-  const filteredAreas = locationQuery.trim().length > 0
-    ? allAreas.filter((a) =>
-        a.code.toUpperCase().startsWith(locationQuery.trim().toUpperCase())
-      )
-    : [];
+
 
   function selectArea(area: Area) {
     setSelectedAreaId(area.id);
     setSelectedAreaCode(area.code);
     setLocationQuery(area.code);
-    setShowSuggestions(false);
+
     setTimeout(() => lotInputRef.current?.focus(), 100);
   }
 
@@ -97,13 +91,18 @@ export default function AddScreen() {
     setSelectedAreaId(null);
     setSelectedAreaCode('');
     setLocationQuery('');
-    setShowSuggestions(false);
+
   }
 
-  // Enter on location field → auto-pick first match
   function handleLocationSubmit() {
-    if (filteredAreas.length > 0 && !selectedAreaId) {
-      selectArea(filteredAreas[0]);
+    const query = locationQuery.trim().toUpperCase();
+    if (!selectedAreaId && query) {
+      const match = allAreas.find((a) => a.code.toUpperCase() === query);
+      if (match) {
+        selectArea(match);
+      } else {
+        Alert.alert('Not Found', `Location "${query}" does not exist.`);
+      }
     } else if (selectedAreaId) {
       lotInputRef.current?.focus();
     }
@@ -128,11 +127,12 @@ export default function AddScreen() {
     setIsConfirming(false);
 
     try {
-      // Handle duplicate lot codes by appending suffix
+      // Handle duplicate lot codes by appending suffix (only within the same location)
       let finalCode = baseCode;
       const { data: matches } = await supabase
         .from('yarn_rolls')
         .select('yarn_code')
+        .eq('area_id', selectedAreaId)
         .ilike('yarn_code', `${baseCode}%`);
 
       if (matches && matches.length > 0) {
@@ -203,15 +203,15 @@ export default function AddScreen() {
     );
   }
 
-  if (role !== 'supervisor') {
+  if (role !== 'supervisor' && role !== 'admin') {
     return (
       <View style={styles.accessDeniedContainer}>
         <View style={styles.accessDeniedCard}>
           <Ionicons name="lock-closed" size={40} color="#dc2626" style={{ marginBottom: 12 }} />
-          <Text style={styles.accessDeniedTitle}>Supervisor Access Required</Text>
+          <Text style={styles.accessDeniedTitle}>Supervisor/Admin Access Required</Text>
           <Text style={styles.accessDeniedText}>
-            Adding new lots is restricted to supervisors.{'\n'}
-            Please contact your supervisor to register new inventory.
+            Adding new lots is restricted to supervisors or admins.{'\n'}
+            Please contact your supervisor or admin to register new inventory.
           </Text>
         </View>
       </View>
@@ -243,13 +243,11 @@ export default function AddScreen() {
               value={locationQuery}
               onChangeText={(text) => {
                 setLocationQuery(text);
-                setShowSuggestions(true);
                 if (selectedAreaCode && text !== selectedAreaCode) {
                   setSelectedAreaId(null);
                   setSelectedAreaCode('');
                 }
               }}
-              onFocus={() => setShowSuggestions(true)}
               autoCapitalize="characters"
               placeholderTextColor="#a0aec0"
               returnKeyType="next"
@@ -270,35 +268,7 @@ export default function AddScreen() {
             </View>
           )}
 
-          {/* Suggestions dropdown */}
-          {showSuggestions && locationQuery.trim().length > 0 && !selectedAreaId && filteredAreas.length > 0 && (
-            <View style={styles.suggestionsContainer}>
-              {filteredAreas.slice(0, 5).map((item) => (
-                <Pressable
-                  key={item.id}
-                  style={({ pressed }) => [
-                    styles.suggestionItem,
-                    pressed && styles.suggestionItemPressed,
-                  ]}
-                  onPress={() => selectArea(item)}
-                >
-                  <Ionicons name="location-outline" size={13} color="#475569" style={{ marginRight: 8 }} />
-                  <Text style={styles.suggestionCode}>{item.code}</Text>
-                </Pressable>
-              ))}
-              {filteredAreas.length > 5 && (
-                <Text style={styles.suggestionsMore}>
-                  +{filteredAreas.length - 5} more — type more to narrow down
-                </Text>
-              )}
-            </View>
-          )}
 
-          {locationQuery.trim().length > 0 && filteredAreas.length === 0 && (
-            <Text style={styles.noSuggestionsText}>
-              No locations matching "{locationQuery.trim().toUpperCase()}"
-            </Text>
-          )}
         </View>
 
         {/* LOT Number Field */}
@@ -500,26 +470,7 @@ const styles = StyleSheet.create({
   },
   selectedText: { fontSize: 12, fontWeight: '700', color: '#059669' },
 
-  // Suggestions dropdown
-  suggestionsContainer: {
-    marginTop: 8, borderWidth: 1, borderColor: '#e2e8f0',
-    borderRadius: 10, backgroundColor: '#fff',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08, shadowRadius: 8, elevation: 4,
-  },
-  suggestionItem: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 14, paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: '#f1f5f9',
-  },
-  suggestionItemPressed: { backgroundColor: '#f0fdf4' },
-  suggestionCode: { fontSize: 14, fontWeight: '700', color: '#1e293b' },
-  suggestionsMore: {
-    fontSize: 11, color: '#94a3b8', textAlign: 'center', paddingVertical: 8,
-  },
-  noSuggestionsText: {
-    fontSize: 12, color: '#94a3b8', marginTop: 8, paddingLeft: 2,
-  },
+
 
   // Save Button
   saveButton: {

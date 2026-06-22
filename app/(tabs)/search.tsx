@@ -13,7 +13,8 @@ import { supabase } from '../../lib/supabase';
 import { YarnRoll } from '../../types';
 import { Ionicons } from '@expo/vector-icons';
 
-// Strip duplicate suffix to get the base lot code (K446-1 → K446)
+// Strip duplicate suffix to get the base lot code (K446-1 → K446).
+// Does NOT normalise "/" or "." — those are part of the real LOT code.
 function cleanLotNumber(lot: string) {
   if (!lot) return '';
   return lot.replace(/-\d+$/, '');
@@ -33,27 +34,19 @@ export default function SearchScreen() {
     setLoading(true);
     setSearched(true);
 
-    // Fetch all in-stock yarn rolls whose code starts with the query
-    // This captures base lots AND suffixed duplicates (K446, K446-1, K446-2)
     const { data, error } = await supabase
       .from('yarn_rolls')
-      .select('id, yarn_code, area_id, status, updated_at, areas(id, code, label)')
+      .select('id, yarn_code, color, description, area_id, status, updated_at, areas(id, code, label)')
       .eq('status', 'in_stock')
       .not('area_id', 'is', null)
-      .ilike('yarn_code', `${trimmed}%`)
+      .or(`yarn_code.ilike.%${trimmed}%,color.ilike.%${trimmed}%,description.ilike.%${trimmed}%`)
       .order('updated_at', { ascending: false })
       .limit(50);
 
     setLoading(false);
 
     if (!error && data) {
-      // Filter server-side results to ensure base lot matches exactly
-      // K446 matches K446, K446-1, K446-2 but NOT K4460, K446B
-      const regex = new RegExp(`^${trimmed}(-\\d+)?$`, 'i');
-      const filtered = (data as unknown as YarnRoll[]).filter((r) =>
-        regex.test(r.yarn_code)
-      );
-      setResults(filtered);
+      setResults(data as unknown as YarnRoll[]);
     } else {
       if (error) console.error('Search error:', error.message);
       setResults([]);
@@ -86,6 +79,12 @@ export default function SearchScreen() {
           {item.yarn_code !== baseLot && (
             <Text style={styles.lotVariant}>Internal: {item.yarn_code}</Text>
           )}
+          {item.color && (
+            <Text style={styles.lotMeta}>Color: {item.color}</Text>
+          )}
+          {item.description && (
+            <Text style={styles.lotMeta} numberOfLines={2}>Desc: {item.description}</Text>
+          )}
         </View>
         <View style={styles.resultRight}>
           <View style={styles.areaBadge}>
@@ -106,7 +105,7 @@ export default function SearchScreen() {
           <Ionicons name="search-outline" size={18} color="#94a3b8" style={styles.searchIcon} />
           <TextInput
             style={styles.input}
-            placeholder="Enter exact LOT number"
+            placeholder="Search Lot, Color, or Description"
             value={query}
             onChangeText={setQuery}
             onSubmitEditing={handleSearch}
@@ -177,7 +176,7 @@ export default function SearchScreen() {
                 </Text>
                 <View style={styles.hintTip}>
                   <Ionicons name="information-circle-outline" size={14} color="#1b4d3e" style={{ marginRight: 6 }} />
-                  <Text style={styles.hintTipText}>Exact match: "K446" finds K446, K446-1, K446-2</Text>
+                  <Text style={styles.hintTipText}>Finds matching Lot, Color, or Description</Text>
                 </View>
               </View>
             )
@@ -271,6 +270,7 @@ const styles = StyleSheet.create({
   resultLeft: { flex: 1 },
   lotCode: { fontSize: 16, fontWeight: '800', color: '#1e293b' },
   lotVariant: { fontSize: 11, color: '#94a3b8', marginTop: 2, fontWeight: '500' },
+  lotMeta: { fontSize: 12, color: '#64748b', marginTop: 3, fontWeight: '500' },
   resultRight: { flexDirection: 'row', alignItems: 'center' },
   areaBadge: {
     flexDirection: 'row',

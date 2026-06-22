@@ -2,17 +2,18 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { Session, User } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export type UserRole = 'user' | 'supervisor';
-export type UserStatus = 'pending' | 'active' | 'rejected';
+export type UserRole = 'worker' | 'supervisor' | 'admin';
 
 type AuthContextType = {
   session: Session | null;
   user: User | null;
   role: UserRole | null;
-  status: UserStatus | null;
   loading: boolean;
   configError: string | null;
+  isGuest: boolean;
+  setGuestMode: (guest: boolean) => Promise<void>;
   refetchRole: () => Promise<void>;
 };
 
@@ -20,17 +21,18 @@ const AuthContext = createContext<AuthContextType>({
   session: null,
   user: null,
   role: null,
-  status: null,
   loading: true,
   configError: null,
+  isGuest: false,
+  setGuestMode: async () => {},
   refetchRole: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [session, setSession] = useState<Session | null>(null);
   const [role, setRole] = useState<UserRole | null>(null);
-  const [status, setStatus] = useState<UserStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isGuest, setIsGuest] = useState(false);
   const [configError] = useState<string | null>(
     isSupabaseConfigured
       ? null
@@ -42,22 +44,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { data, error } = await supabase
         .from('profiles')
-        .select('role, status')
+        .select('role')
         .eq('id', userId)
         .single();
 
       if (!error && data) {
         setRole(data.role as UserRole);
-        setStatus(data.status as UserStatus);
       } else {
-        // Fallback to user metadata role or default user
-        setRole((userMetadataRole || 'user') as UserRole);
-        setStatus('pending');
+        // Fallback to user metadata role or default worker
+        setRole((userMetadataRole || 'worker') as UserRole);
       }
     } catch (err) {
       console.error('Error fetching role in context:', err);
-      setRole((userMetadataRole || 'user') as UserRole);
-      setStatus('pending');
+      setRole((userMetadataRole || 'worker') as UserRole);
     }
   }
 
@@ -73,16 +72,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Initial session load
     supabase.auth.getSession()
-      .then(({ data: { session } }) => {
+      .then(async ({ data: { session } }) => {
         if (!active) return;
         setSession(session);
         if (session?.user) {
-          const metaRole = (session.user.user_metadata?.role || 'user') as UserRole;
-          setRole(metaRole);
-          fetchUserRole(session.user.id, metaRole);
+          const metaRole = (session.user.user_metadata?.role || 'worker') as UserRole;
+          await fetchUserRole(session.user.id, metaRole);
         } else {
-          setRole(null);
-          setStatus(null);
+          // Check for guest mode
+          try {
+            const guestMode = await AsyncStorage.getItem('guest_mode');
+            if (guestMode === 'true') {
+              setIsGuest(true);
+              setRole('worker');
+            } else {
+              setRole(null);
+            }
+          } catch {
+            setRole(null);
+          }
         }
       })
       .catch((err) => {
@@ -95,16 +103,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, currentSession) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
       if (!active) return;
       setSession(currentSession);
       if (currentSession?.user) {
-        const metaRole = (currentSession.user.user_metadata?.role || 'user') as UserRole;
-        setRole(metaRole);
-        fetchUserRole(currentSession.user.id, metaRole);
+        setIsGuest(false);
+        const metaRole = (currentSession.user.user_metadata?.role || 'worker') as UserRole;
+        await fetchUserRole(currentSession.user.id, metaRole);
       } else {
-        setRole(null);
-        setStatus(null);
+        if (!isGuest) {
+          setRole(null);
+        }
       }
       setLoading(false);
     });
@@ -136,15 +145,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
+  // Listen for realtime changes to the user's profile (role and status)
+  useEffect(() => {
+    if (!isSupabaseConfigured || !session?.user?.id) return;
+
+    const profileSubscription = supabase
+      .channel(`public:profiles:${session.user.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
+        (payload) => {
+          if (payload.new && payload.new.role) {
+            setRole(payload.new.role as UserRole);
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(profileSubscription);
+    };
+  }, [session?.user?.id]);
+
+  const setGuestMode = async (guest: boolean) => {
+    setIsGuest(guest);
+    if (guest) {
+      await AsyncStorage.setItem('guest_mode', 'true');
+      setRole('worker');
+    } else {
+      await AsyncStorage.removeItem('guest_mode');
+      if (!session?.user) {
+        setRole(null);
+      }
+    }
+  };
+
   const refetchRole = async () => {
     if (session?.user) {
-      const metaRole = session.user.user_metadata?.role || 'user';
+      const metaRole = session.user.user_metadata?.role || 'worker';
       await fetchUserRole(session.user.id, metaRole);
     }
   };
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, role, status, loading, configError, refetchRole }}>
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, role, loading, configError, isGuest, setGuestMode, refetchRole }}>
       {children}
     </AuthContext.Provider>
   );

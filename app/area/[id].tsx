@@ -47,14 +47,16 @@ export default function AreaDetailScreen() {
           >
             <Ionicons name="time-outline" size={14} color="#1b4d3e" />
           </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.moveButton}
-            onPress={() => router.push(`/move/${item.id}`)}
-            activeOpacity={0.7}
-          >
-            <Ionicons name="swap-horizontal" size={14} color="#ffffff" style={{ marginRight: 4 }} />
-            <Text style={styles.moveButtonText}>Move</Text>
-          </TouchableOpacity>
+          {role === 'supervisor' && (
+            <TouchableOpacity
+              style={styles.moveButton}
+              onPress={() => router.push(`/move/${item.id}`)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="swap-horizontal" size={14} color="#ffffff" style={{ marginRight: 4 }} />
+              <Text style={styles.moveButtonText}>Move</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
     );

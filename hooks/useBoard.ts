@@ -28,8 +28,9 @@ export function useBoard(session: Session | null | undefined) {
 
   const fetchBoard = useCallback(async (retryCount = 0, force = false) => {
     const currentSession = sessionRef.current;
-    // Do not fetch until we have a session
-    if (!currentSession) return;
+    // session === undefined means auth is still loading — wait
+    // session === null means guest mode (no login) — allow fetch (anon key provides read access)
+    if (currentSession === undefined) return;
 
     const now = Date.now();
     if (!force && inFlightRef.current) return;
@@ -40,7 +41,7 @@ export function useBoard(session: Session | null | undefined) {
     lastFetchStartedAtRef.current = now;
     const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
 
-    console.log('[useBoard] Fetching board data... session user:', currentSession.user?.email);
+    console.log('[useBoard] Fetching board data... session user:', currentSession?.user?.email ?? 'guest');
 
     try {
       const { data, error } = await supabase
@@ -109,16 +110,11 @@ export function useBoard(session: Session | null | undefined) {
   }, [userId]);
 
   useEffect(() => {
-    // session === undefined means "not yet known" (AuthContext still loading)
-    // session === null means "confirmed not logged in" → skip
+    // session === undefined means "not yet known" (AuthContext still loading) → wait
+    // session === null means "guest mode" or "not logged in" → still fetch (anon key)
     // session is a Session object → fetch!
     const currentSession = sessionRef.current;
     if (currentSession === undefined) return;
-
-    if (!currentSession) {
-      setLoading(false);
-      return;
-    }
 
     if (areas.length === 0) {
       setLoading(true);
